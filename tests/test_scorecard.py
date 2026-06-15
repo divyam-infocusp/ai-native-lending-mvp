@@ -46,6 +46,16 @@ def test_score_is_integer():
     assert isinstance(result.score, int)
 
 
+def test_golden_score_for_known_fixture():
+    """Golden fixture: BASE must score exactly 75 → band B under v1 config.
+
+    cibil 720 → 25 | income 50k → 15 | dti ~0.267 → 20 | tenure 24 → 15  = 75
+    """
+    result = score(BASE)
+    assert result.score == 75
+    assert result.band == RiskBand.B
+
+
 # ---------------------------------------------------------------------------
 # Band thresholds (v1: A≥90, B≥70, C≥50, D≥30, X<30)
 # ---------------------------------------------------------------------------

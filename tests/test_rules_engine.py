@@ -72,6 +72,35 @@ def test_knockout_short_circuits():
     assert "R02_MAX_AGE" not in evaluated_ids
 
 
+def test_knockout_beats_soft_hit():
+    """Knockout + soft hit present together → knockout wins (DECLINE), and
+    the soft hit is never even evaluated (short-circuit)."""
+    f = tweak(cibil_score=600, monthly_obligations=30_000)  # LOW_CIBIL (KO) + HIGH_DTI (soft)
+    result = evaluate(f)
+    assert result.disposition_hint == DispositionHint.DECLINE
+    reasons = [h.reason_code for h in result.policy_hits]
+    assert "LOW_CIBIL" in reasons
+    assert "HIGH_DTI" not in reasons  # soft rule short-circuited away
+
+
+# Boundary fixtures: each knockout rule, just-pass vs just-fail across its edge
+@pytest.mark.parametrize("field,pass_val,fail_val,reason", [
+    ("age", 21, 20, "UNDERAGE"),
+    ("age", 60, 61, "OVERAGE"),
+    ("cibil_score", 650, 649, "LOW_CIBIL"),
+    ("monthly_income", 20_000, 19_999, "INSUFFICIENT_INCOME"),
+    ("employment_tenure_months", 6, 5, "SHORT_EMPLOYMENT"),
+])
+def test_knockout_boundaries(field, pass_val, fail_val, reason):
+    # just-pass: this rule must not fire
+    passing = evaluate(tweak(**{field: pass_val}))
+    assert reason not in [h.reason_code for h in passing.policy_hits]
+    # just-fail: this rule fires and declines
+    failing = evaluate(tweak(**{field: fail_val}))
+    assert failing.disposition_hint == DispositionHint.DECLINE
+    assert reason in [h.reason_code for h in failing.policy_hits]
+
+
 # ---------------------------------------------------------------------------
 # Soft policy failures → ESCALATE
 # ---------------------------------------------------------------------------
