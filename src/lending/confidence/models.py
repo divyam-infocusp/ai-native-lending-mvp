@@ -7,6 +7,10 @@ class RiskFlag(str, Enum):
     CROSS_SOURCE_MISMATCH = "CROSS_SOURCE_MISMATCH"  # field differs across sources
     FORMAT_INVALID = "FORMAT_INVALID"        # format/checksum validator failed
     CONFIDENCE_BELOW_THRESHOLD = "CONFIDENCE_BELOW_THRESHOLD"  # composite too low
+    # --- payslip obvious-fake checks (document-level, pure) ---
+    COMPONENT_SUM_MISMATCH = "COMPONENT_SUM_MISMATCH"    # earnings don't sum to gross
+    NET_DERIVATION_MISMATCH = "NET_DERIVATION_MISMATCH"  # gross - deductions != net
+    IMPLAUSIBLE_VALUE = "IMPLAUSIBLE_VALUE"              # negatives / net>gross / out-of-range
 
 
 @dataclass(frozen=True)

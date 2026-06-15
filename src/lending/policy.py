@@ -83,5 +83,9 @@ CONFIDENCE_POLICY: dict[str, dict] = {
     "v1": {
         "threshold": 0.70,      # min composite confidence for is_reliable
         "min_ocr_conf": 0.60,   # OCR confidence below this fires LOW_OCR
+        # payslip obvious-fake checks
+        "payslip_arithmetic_tolerance": 1.0,   # INR rounding slack on sums
+        "payslip_min_gross": 5_000,            # implausibly low monthly gross
+        "payslip_max_gross": 10_000_000,       # implausibly high monthly gross
     },
 }
