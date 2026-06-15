@@ -11,9 +11,16 @@ class RiskFlag(str, Enum):
 
 @dataclass(frozen=True)
 class CrossSourceCheck:
-    """Result of comparing a field value across two data sources."""
+    """Result of comparing a field value across two data sources.
+
+    source_a / source_b name the two origins compared (e.g. "aadhaar_xml",
+    "pan_card_ocr", "cibil_bureau") so a failed check is reviewable in audit:
+    we know *which* two sources disagreed, not just that something mismatched.
+    """
     field_name: str
-    matches: bool  # True if sources agree
+    source_a: str
+    source_b: str
+    matches: bool  # True if the two sources agree on this field
 
 
 @dataclass(frozen=True)

@@ -17,12 +17,12 @@ from lending.confidence import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-def agree(field: str = "pan") -> CrossSourceCheck:
-    return CrossSourceCheck(field_name=field, matches=True)
+def agree(field: str = "pan", source_a: str = "aadhaar_xml", source_b: str = "pan_card_ocr") -> CrossSourceCheck:
+    return CrossSourceCheck(field_name=field, source_a=source_a, source_b=source_b, matches=True)
 
 
-def disagree(field: str = "pan") -> CrossSourceCheck:
-    return CrossSourceCheck(field_name=field, matches=False)
+def disagree(field: str = "pan", source_a: str = "aadhaar_xml", source_b: str = "pan_card_ocr") -> CrossSourceCheck:
+    return CrossSourceCheck(field_name=field, source_a=source_a, source_b=source_b, matches=False)
 
 
 def valid(field: str = "pan") -> ValidatorResult:
@@ -87,6 +87,22 @@ def test_mismatch_fires_flag():
 def test_all_agree_no_mismatch_flag():
     result = field_confidence(ocr_conf=0.95, cross_source_checks=[agree(), agree()], validators=[])
     assert RiskFlag.CROSS_SOURCE_MISMATCH not in result.risk_flags
+
+
+def test_failed_check_retains_source_provenance():
+    """A mismatch must be traceable to the two sources that disagreed (audit)."""
+    checks = [
+        agree("name", source_a="pan_card_ocr", source_b="cibil_bureau"),
+        disagree("date_of_birth", source_a="aadhaar_xml", source_b="bank_statement"),
+    ]
+    result = field_confidence(ocr_conf=0.95, cross_source_checks=checks, validators=[])
+    assert RiskFlag.CROSS_SOURCE_MISMATCH in result.risk_flags
+    # Caller can recover exactly which sources disagreed from the input checks
+    failed = [c for c in checks if not c.matches]
+    assert len(failed) == 1
+    assert failed[0].field_name == "date_of_birth"
+    assert failed[0].source_a == "aadhaar_xml"
+    assert failed[0].source_b == "bank_statement"
 
 
 # ---------------------------------------------------------------------------
