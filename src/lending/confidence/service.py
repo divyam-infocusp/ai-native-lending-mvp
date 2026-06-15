@@ -12,20 +12,17 @@ Risk flags are attached for each failing dimension.
 No LLM self-report is used — this is the "grounded" guarantee.
 """
 
+from lending.policy import CONFIDENCE_POLICY
+
 from .models import CrossSourceCheck, FieldConfidenceResult, RiskFlag, ValidatorResult
-
-# Minimum composite confidence to declare a field reliable
-_DEFAULT_THRESHOLD = 0.70
-
-# Minimum OCR confidence before LOW_OCR flag fires
-_MIN_OCR_CONF = 0.60
 
 
 def field_confidence(
     ocr_conf: float,
     cross_source_checks: list[CrossSourceCheck],
     validators: list[ValidatorResult],
-    threshold: float = _DEFAULT_THRESHOLD,
+    threshold: float | None = None,
+    policy_version: str = "v1",
 ) -> FieldConfidenceResult:
     """
     Compute composite field confidence from three grounded signals.
@@ -34,11 +31,21 @@ def field_confidence(
         ocr_conf: Raw OCR confidence for this field [0.0, 1.0].
         cross_source_checks: Agreement checks across independent sources.
         validators: Format/checksum validator results for this field.
-        threshold: Minimum composite confidence for is_reliable=True.
+        threshold: Minimum composite confidence for is_reliable=True. Defaults
+            to the versioned policy value; pass explicitly only to override.
+        policy_version: CONFIDENCE_POLICY version supplying threshold + min OCR.
 
     Returns:
         FieldConfidenceResult with composite confidence, risk flags, and reliability verdict.
     """
+    if policy_version not in CONFIDENCE_POLICY:
+        raise ValueError(f"Unknown policy_version: {policy_version!r}")
+
+    cfg = CONFIDENCE_POLICY[policy_version]
+    if threshold is None:
+        threshold = cfg["threshold"]
+    min_ocr_conf = cfg["min_ocr_conf"]
+
     if not (0.0 <= ocr_conf <= 1.0):
         raise ValueError(f"ocr_conf must be in [0, 1]: got {ocr_conf}")
     if not (0.0 <= threshold <= 1.0):
@@ -47,7 +54,7 @@ def field_confidence(
     risk_flags: list[RiskFlag] = []
 
     # --- Signal 1: OCR confidence ---
-    if ocr_conf < _MIN_OCR_CONF:
+    if ocr_conf < min_ocr_conf:
         risk_flags.append(RiskFlag.LOW_OCR)
 
     # --- Signal 2: Cross-source agreement ratio ---

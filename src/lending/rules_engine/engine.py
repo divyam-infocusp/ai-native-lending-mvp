@@ -8,6 +8,8 @@ No LLM involvement — pure arithmetic + comparisons.
 from dataclasses import dataclass
 from typing import Callable
 
+from lending.policy import RULES_POLICY
+
 from .models import (
     ApplicantFeatures,
     DispositionHint,
@@ -103,19 +105,10 @@ _RULES_V1: list[Rule] = [
 ]
 
 
-# Default policy parameters for v1
-_DEFAULT_POLICY_V1: dict = {
-    "min_age": 21,
-    "max_age": 60,
-    "min_cibil_score": 650,
-    "min_monthly_income": 20_000,
-    "min_employment_months": 6,
-    "max_dti": 0.50,
-    "max_loan_amount": 2_000_000,
-}
-
-_RULE_CATALOGUE: dict[str, tuple[list[Rule], dict]] = {
-    "v1": (_RULES_V1, _DEFAULT_POLICY_V1),
+# Rule *logic* (the catalogue) lives in code; the *thresholds* it reads live in
+# the versioned RULES_POLICY config (§16.9).
+_RULE_CATALOGUE: dict[str, list[Rule]] = {
+    "v1": _RULES_V1,
 }
 
 
@@ -135,11 +128,11 @@ def evaluate(
     Multiple soft failures accumulate; any soft failure → ESCALATE.
     All rules pass → APPROVE.
     """
-    if rules_version not in _RULE_CATALOGUE:
+    if rules_version not in _RULE_CATALOGUE or rules_version not in RULES_POLICY:
         raise ValueError(f"Unknown rules_version: {rules_version!r}")
 
-    rules, default_policy = _RULE_CATALOGUE[rules_version]
-    policy = {**default_policy, **(policy_overrides or {})}
+    rules = _RULE_CATALOGUE[rules_version]
+    policy = {**RULES_POLICY[rules_version], **(policy_overrides or {})}
 
     rule_results: list[RuleResult] = []
     policy_hits: list[PolicyHit] = []
