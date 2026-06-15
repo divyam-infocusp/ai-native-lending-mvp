@@ -521,3 +521,82 @@ Failures raise a `risk_flag` and lower income confidence, feeding the 16.4 gate.
 **Decision.** **Drop pgvector from the MVP.** When it returns in a future version, a bright line applies: **retrieval may inform assistance and explanation (e.g. the underwriter copilot, read-only, human-facing), never the decision** — eligibility, rules, scorecard, and pricing run on versioned config only (§6.4–6.6).
 
 **Affects.** §10 (remove pgvector); §14 (add "policy retrieval (RAG) for the underwriter copilot / explanation surface" as a future addition, with the never-feeds-the-decision constraint).
+
+---
+
+## 17. End-to-end user journey (per-layer behavior + supported inputs)
+
+This section traces a single applicant through the pipeline from the **user's** point of view, and shows what each architectural plane does at each step. It is the connective tissue between §3 (planes), §4 (state machine), and §7 (agents). The four planes are abbreviated below:
+
+- **WB** — Workflow Backbone (Temporal state machine + LOS system-of-record) — §6.1
+- **AG** — Agent Layer (LangGraph agents: reason → tool → validate → escalate) — §6.2, §7
+- **SVC** — Integration & Model Services (adapters + deterministic rules/scorecard/pricing) — §6.3–6.6
+- **XC** — Cross-cutting (consent, audit, governance/versioning, observability) — §9
+
+### 17.1 Inputs the MVP accepts
+
+| Category | Inputs | Form | Notes |
+|---|---|---|---|
+| **Form fields (structured)** | name, DOB, PAN, address, mobile, email, employment = salaried, employer, **stated** monthly income, requested amount, tenure, purpose | typed | Drives eligibility + feeds features |
+| **Consent action** | Layer-1 customer authorization (purpose-bound, revocable) | explicit e-consent toggle | Gates every downstream pull (§16.6) |
+| **Identity doc** | PAN card | PDF / JPEG / PNG | OCR + checksum validation |
+| **Address proof** | utility bill / passport / masked Aadhaar | PDF / JPEG / PNG | OCR + cross-check vs form |
+| **Income doc** | payslips (last N months) | PDF | Low-confidence input + obvious-fake checks (§16.8) |
+| **Language preference** | one of an enumerated supported set | selection | Assist in any; **binding text only in template languages** (§16.11) |
+| **e-Sign action** | offer acceptance | signature event | Transitions to `OFFER_ACCEPTED` |
+| **Channel / lead source** | UTM / referral / campaign | metadata | Lead Qualification attribution |
+| **System-pulled (on consent)** | CIBIL score + tradelines + obligations; sanctions/PEP screen | adapter calls | Bureau + screening |
+
+**Explicitly NOT accepted in the MVP:** Account Aggregator bank-feed data and uploaded bank statements as a *decision* input (cashflow-led path is the first fast-follow, §16.7); new-to-credit / self-employed applicants (out of segment → declined-early); co-applicants; languages outside the template set (fall back to English + human).
+
+**File constraints:** PDF and common image formats (JPEG/PNG); single- or multi-page; size-capped; non-supported types rejected at upload with a prompt.
+
+### 17.2 The journey — Priya, a salaried applicant
+
+#### Stage 1 · Acquisition → `LEAD` → `LEAD_QUALIFIED` (Step 2)
+> Priya lands from a campaign link, enters basic details (income, employment, amount, PAN), and gives consent to be assessed.
+
+- **WB:** Creates the application record in the LOS; state `LEAD`. On qualification, transitions `LEAD → LEAD_QUALIFIED`.
+- **AG — Lead Qualification Agent:** Runs the **segment gate** — salaried + plausibly credit-tested + in-policy amount/tenure. In-segment → next-best-action; out-of-segment (thin-file / self-employed) → **declined-early / nurture** here, not downstream (§16.7).
+- **SVC:** Product catalog + eligibility pre-check (deterministic config). No external pulls yet.
+- **XC:** **Consent (Layer 1)** captured with `purpose` + `status:active` (§16.6). Audit logs the lead, channel attribution, and the consent artifact. Governance stamps the eligibility-config version.
+
+#### Stage 2 · Onboarding → `APPLICATION_SUBMITTED` (Step 3)
+> Priya completes the form (assisted in her language) and uploads PAN, an address proof, and 3 payslips.
+
+- **WB:** Holds the submission; transitions to `APPLICATION_SUBMITTED` once the checklist is complete.
+- **AG — Onboarding Copilot:** Autofills from the lead, generates the **document checklist**, gives **multilingual conversational assist**. Any *binding* text comes from reviewed templates, not live translation (§16.11). Missing/invalid docs → prompts Priya (not an exception yet).
+- **SVC:** Object storage accepts uploads (PDF/image); upload validation (type/size).
+- **XC:** Audit logs every uploaded artifact + the completed application. No pulls, so no consent gate fires yet.
+
+#### Stage 3 · KYC → `KYC_IN_PROGRESS` → `KYC_VERIFIED` (Step 4)
+> Priya waits a few seconds while her documents are read and verified.
+
+- **WB:** `APPLICATION_SUBMITTED → KYC_IN_PROGRESS`. Each external call is a durable, idempotent activity (§16.5). On success → `KYC_VERIFIED`; on low confidence/mismatch → `KYC_EXCEPTION`.
+- **AG — Document Intelligence Agent:** OCR-extracts fields, normalizes them (LLM structures, never grades itself), runs validators, and computes **grounded confidence** = OCR score × cross-source agreement × format/checksum (§16.4). Applies payslip **obvious-fake checks** (arithmetic, cross-doc, plausibility, tamper flag, hash reuse) → income marked low-confidence with risk flags (§16.8). Output schema-validated; violation → reject + retry.
+- **SVC:** OCR/IDP adapter returns text + per-field confidence; KYC + Sanctions/PEP adapter screens identity. (Mock mode pre-onboarding.)
+- **XC:** **Consent gate** checks Layer-1 (active + purpose) *and* mints a fresh Layer-2 artifact before the KYC pull (§16.6). Audit logs each tool call, extracted fields, and confidence. Governance pins the OCR model + prompt versions.
+
+#### Stage 4 · Underwriting → `UNDERWRITING` → `DECISION_READY` (Step 5)
+> The system pulls Priya's credit history and assembles her risk picture.
+
+- **WB:** `KYC_VERIFIED → UNDERWRITING`. Bureau pull is an **idempotent** activity (never a double hard inquiry) (§16.5). Data complete → `DECISION_READY`; thin file / data gap → `UW_EXCEPTION`.
+- **AG — Underwriting Agent:** On consent, pulls bureau data, assembles **features** (bureau score, obligations, DTI, stated income with its confidence), then calls rules/scorecard **read-only** and writes an **explainability summary** (§7). It interprets — it does **not** decide.
+- **SVC — the decision of record:** **Rules Engine** (hard knockouts → policy checks → band) emits `policy_hits` with `reason_code`s; **Scorecard** emits score + band. Deterministic, versioned, reproducible (§2.1, §6.4–6.5). Income-sensitive cases (haircut flips band) flagged → refer (§16.8).
+- **XC:** Consent gate fires again before the bureau pull. Audit logs the bureau pull, the exact features in, the rules fired, and the score out. Governance pins rules + scorecard config versions onto the decision.
+
+#### Stage 5 · Decision & Offer → `APPROVED` → `OFFER_GENERATED` → `OFFER_ACCEPTED` (Step 6)
+> Priya sees an instant approval with a clear explanation and a priced offer she e-signs.
+
+- **WB:** `DECISION_READY → APPROVED` (or `DECLINED`/`REFERRED`). `APPROVED → OFFER_GENERATED`; on e-sign `→ OFFER_ACCEPTED`; on timeout `→ OFFER_EXPIRED`.
+- **AG — Decision QA Agent:** QA-checks the engine output, **renders** the explanation and adverse-action reasons from the engine's reason codes (words only, never the set — faithfulness-checked) (§16.1), in Priya's language via templates (§16.11), assembles the priced offer letter, sends notifications, routes to e-sign. Borderline/policy-hit → **REFERRED** to a human.
+- **SVC:** **Pricing Engine** maps band + policy → rate/amount/tenure/EMI (§6.6). e-Sign + Notifications adapters deliver the offer.
+- **XC:** Audit stores the decision, reason codes + rendered text, the offer, and the full pinned version set — so the decision is **reconstructable** (§9.1, §9.4). Observability records time-to-decision (data-present→decision) and updates KPI/confusion-matrix dashboards (§16.2, §16.3).
+
+### 17.3 When it doesn't go clean — the human path
+
+At any `*_EXCEPTION` or `REFERRED`:
+- **WB:** Parks the workflow **durably** (a Temporal signal-wait) — indefinitely, no data loss.
+- **AG:** Hands over its reasoning + the specific low-confidence items/flags as context.
+- **SVC:** No auto-decision is issued (the "should-escalate-but-auto-decided" safety cell of §16.2 stays empty).
+- **XC — Ops Console:** A reviewer sees the parked case, the agent's reasoning, source docs side-by-side, and **bounded, reason-coded actions**. Hard knockouts (sanctions) are **non-overridable**; soft overrides record the **human as decision-of-record** (`decision.source = underwriter:<id>`, engine output preserved) (§16.10). The resolution is a signal that **resumes** the workflow.
