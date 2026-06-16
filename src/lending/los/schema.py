@@ -126,6 +126,7 @@ class Applicant(BaseModel):
 class Application(BaseModel):
     application_id: str = Field(default_factory=_new_id)
     status: ApplicationStatus = ApplicationStatus.CREATED
+    workflow_state: Optional[str] = None  # fine-grained §4 state, driven by the workflow (#13)
     applicant: Applicant
     features: dict = Field(default_factory=dict)
     consent: Consent = Field(default_factory=Consent)
