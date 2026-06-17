@@ -77,6 +77,27 @@ SCORECARD_POLICY: dict[str, dict] = {
 
 
 # ---------------------------------------------------------------------------
+# Pricing Engine — risk-based offer terms (§16.9)
+#
+# band_rates:        annual interest rate (%) per risk band — better band, lower rate.
+# band_max_amount:   ceiling on principal per band (riskier bands borrow less).
+# tenure bounds:     allowed loan duration (months); the request is clamped here.
+# affordability_dti: max share of monthly income that may go to total debt; caps
+#                    the offered amount so the new EMI stays within budget.
+# Band X is intentionally absent — it is not lendable.
+# ---------------------------------------------------------------------------
+PRICING_POLICY: dict[str, dict] = {
+    "v1": {
+        "band_rates": {"A": 10.5, "B": 14.5, "C": 18.0, "D": 22.0},
+        "band_max_amount": {"A": 2_000_000, "B": 1_000_000, "C": 500_000, "D": 200_000},
+        "tenure_min_months": 12,
+        "tenure_max_months": 60,
+        "affordability_dti": 0.50,
+    },
+}
+
+
+# ---------------------------------------------------------------------------
 # Confidence Service — composite reliability thresholds (§16.4)
 # ---------------------------------------------------------------------------
 CONFIDENCE_POLICY: dict[str, dict] = {
