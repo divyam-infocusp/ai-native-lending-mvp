@@ -84,40 +84,96 @@ def test_illegal_transition_rejected(frm, to):
 # Temporal helpers
 # ---------------------------------------------------------------------------
 
-def _seed_application(repo: ApplicationRepository) -> str:
-    app = Application(applicant=Applicant(full_name="Priya Sharma"))
+# A clean, comfortably-approvable applicant (no knockouts, high band, not income-sensitive).
+CLEAN_FEATURES = {
+    "age": 32,
+    "monthly_income": 90_000,
+    "monthly_obligations": 3_000,
+    "cibil_score": 780,
+    "employment_tenure_months": 60,
+    "loan_amount_requested": 300_000,
+    "loan_tenure_months": 36,
+    "is_salaried": True,
+    "has_cibil_record": True,
+}
+
+
+def _seed_application(repo: ApplicationRepository, features: dict | None = None) -> str:
+    app = Application(
+        applicant=Applicant(full_name="Priya Sharma"),
+        features=features if features is not None else dict(CLEAN_FEATURES),
+    )
     repo.save(app)
     return app.application_id
+
+
+async def _run_workflow(env, repo, audit, app_id) -> str:
+    activities = OriginationActivities(repo, audit)
+    async with Worker(
+        env.client,
+        task_queue=TASK_QUEUE,
+        workflows=[LoanOriginationWorkflow],
+        activities=[activities.advance, activities.decide],
+    ):
+        return await env.client.execute_workflow(
+            LoanOriginationWorkflow.run,
+            app_id,
+            id=f"wf-{uuid.uuid4().hex}",
+            task_queue=TASK_QUEUE,
+        )
 
 
 # ---------------------------------------------------------------------------
 # End-to-end through the workflow
 # ---------------------------------------------------------------------------
 
-async def test_workflow_reaches_offer_generated():
+async def test_clean_applicant_reaches_offer_generated():
     engine = make_engine()
     repo = ApplicationRepository(engine)
     audit = AuditStore(engine)
-    app_id = _seed_application(repo)
-    activities = OriginationActivities(repo, audit)
+    app_id = _seed_application(repo)  # clean → approves
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
-        async with Worker(
-            env.client,
-            task_queue=TASK_QUEUE,
-            workflows=[LoanOriginationWorkflow],
-            activities=[activities.advance],
-        ):
-            result = await env.client.execute_workflow(
-                LoanOriginationWorkflow.run,
-                app_id,
-                id=f"wf-{uuid.uuid4().hex}",
-                task_queue=TASK_QUEUE,
-            )
+        result = await _run_workflow(env, repo, audit, app_id)
 
     assert result == State.OFFER_GENERATED.value
-    # LOS record reflects the final state
-    assert repo.get(app_id).workflow_state == State.OFFER_GENERATED.value
+    app = repo.get(app_id)
+    assert app.workflow_state == State.OFFER_GENERATED.value
+    # The real decision was recorded (no longer a stub)
+    assert app.decision is not None
+    assert app.decision.disposition.value == "approve"
+    assert app.decision.source == "engine"
+
+
+async def test_knockout_applicant_is_declined():
+    engine = make_engine()
+    repo = ApplicationRepository(engine)
+    audit = AuditStore(engine)
+    bad = dict(CLEAN_FEATURES, cibil_score=600)  # LOW_CIBIL hard knockout
+    app_id = _seed_application(repo, bad)
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        result = await _run_workflow(env, repo, audit, app_id)
+
+    assert result == State.DECLINED.value
+    decision = repo.get(app_id).decision
+    assert decision.disposition.value == "decline"
+    assert "LOW_CIBIL" in decision.reason_codes
+
+
+async def test_soft_hit_applicant_is_referred():
+    engine = make_engine()
+    repo = ApplicationRepository(engine)
+    audit = AuditStore(engine)
+    # High existing obligations → DTI soft hit → escalate → REFER
+    soft = dict(CLEAN_FEATURES, monthly_obligations=60_000)
+    app_id = _seed_application(repo, soft)
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        result = await _run_workflow(env, repo, audit, app_id)
+
+    assert result == State.REFERRED.value
+    assert repo.get(app_id).decision.disposition.value == "refer"
 
 
 async def test_each_transition_emits_exactly_one_audit_event():
@@ -125,34 +181,22 @@ async def test_each_transition_emits_exactly_one_audit_event():
     repo = ApplicationRepository(engine)
     audit = AuditStore(engine)
     app_id = _seed_application(repo)
-    activities = OriginationActivities(repo, audit)
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
-        async with Worker(
-            env.client,
-            task_queue=TASK_QUEUE,
-            workflows=[LoanOriginationWorkflow],
-            activities=[activities.advance],
-        ):
-            await env.client.execute_workflow(
-                LoanOriginationWorkflow.run,
-                app_id,
-                id=f"wf-{uuid.uuid4().hex}",
-                task_queue=TASK_QUEUE,
-            )
+        await _run_workflow(env, repo, audit, app_id)
 
     trail = audit.reconstruct(app_id)
     transitions = [e for e in trail if e.event_type == "state_transition"]
-    # One event per hop along the happy path
+    # One event per hop along the happy path (decision routes to APPROVED → OFFER)
     assert len(transitions) == len(HAPPY_PATH) - 1
-    # Events match the path, in order
     expected = [
         {"from": frm.value, "to": to.value}
         for frm, to in zip(HAPPY_PATH, HAPPY_PATH[1:])
     ]
     assert [e.payload for e in transitions] == expected
-    # Final event lands on OFFER_GENERATED
     assert transitions[-1].payload["to"] == State.OFFER_GENERATED.value
+    # Exactly one DECISION event was also recorded
+    assert len([e for e in trail if e.event_type == "decision"]) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +215,7 @@ async def test_workflow_replay_is_deterministic():
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[LoanOriginationWorkflow],
-            activities=[activities.advance],
+            activities=[activities.advance, activities.decide],
         ):
             handle = await env.client.start_workflow(
                 LoanOriginationWorkflow.run,

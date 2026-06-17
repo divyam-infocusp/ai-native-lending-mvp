@@ -45,9 +45,18 @@ class LoanOriginationWorkflow:
     async def run(self, application_id: str) -> str:
         current = HAPPY_PATH[0]
         while True:
-            next_state = stub_next_state(current)
+            if current == State.DECISION_READY:
+                # Real decision engine (#18) replaces the stubbed approve.
+                outcome = await workflow.execute_activity(
+                    OriginationActivities.decide,
+                    args=[application_id],
+                    start_to_close_timeout=timedelta(seconds=10),
+                )
+                next_state = State(outcome)  # APPROVED | DECLINED | REFERRED
+            else:
+                next_state = stub_next_state(current)
             if next_state is None:
-                break  # decider says we're done (offer generated / terminal)
+                break  # done (offer generated, or a terminal/referred end)
             result = await workflow.execute_activity(
                 OriginationActivities.advance,
                 args=[application_id, current.value, next_state.value],

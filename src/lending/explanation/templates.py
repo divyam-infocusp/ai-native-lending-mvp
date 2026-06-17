@@ -58,6 +58,10 @@ TEMPLATES: dict[tuple[str, str], Template] = {
         "No credit bureau record was found for the applicant.",
         "No credit bureau record was found",
     ),
+    ("LOW_SCORE", "en"): Template(
+        "Your overall credit assessment score did not meet the minimum required threshold.",
+        "overall credit assessment score",
+    ),
     # ---- Hindi (subset, to demonstrate per-language selection with code-inserted numbers) ----
     ("LOW_CIBIL", "hi"): Template(
         "आपका क्रेडिट ब्यूरो स्कोर {cibil_score} आवश्यक न्यूनतम {min_cibil_score} से कम है।",

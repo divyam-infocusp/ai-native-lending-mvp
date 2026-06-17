@@ -109,6 +109,7 @@ class Decision(BaseModel):
     score: Optional[int] = None
     band: Optional[str] = None
     version_set: Optional[VersionSet] = None  # full pinned version stamp (§9.4, #7)
+    explanation: Optional[str] = None         # rendered adverse-action text, frozen at decision time (§9.1)
 
 
 # ---------------------------------------------------------------------------

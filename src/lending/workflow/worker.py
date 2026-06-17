@@ -36,7 +36,7 @@ async def main() -> None:
         client,
         task_queue=TASK_QUEUE,
         workflows=[LoanOriginationWorkflow],
-        activities=[activities.advance],
+        activities=[activities.advance, activities.decide],
     )
     await worker.run()
 

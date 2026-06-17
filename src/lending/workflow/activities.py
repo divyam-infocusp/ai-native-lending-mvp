@@ -16,9 +16,19 @@ from datetime import datetime, timezone
 from temporalio import activity
 
 from lending.audit import AuditStore, EventType
+from lending.decision import decide, record_decision
 from lending.los import ApplicationRepository, ApplicationStatus
+from lending.los.schema import Disposition
+from lending.rules_engine import ApplicantFeatures
 
 from .statemachine import State, assert_legal
+
+# Map the engine's disposition to the §4 outcome state the workflow advances to.
+_DISPOSITION_TO_STATE: dict[Disposition, State] = {
+    Disposition.APPROVE: State.APPROVED,
+    Disposition.DECLINE: State.DECLINED,
+    Disposition.REFER: State.REFERRED,
+}
 
 # Map the fine-grained §4 state to the coarse LOS status.
 _COARSE_STATUS: dict[State, ApplicationStatus] = {
@@ -67,3 +77,15 @@ class OriginationActivities:
             actor="workflow",
         )
         return to_state
+
+    @activity.defn
+    async def decide(self, application_id: str) -> str:
+        """Run the real decision engine (#18), persist + audit the decision-of-record,
+        and return the §4 outcome state (APPROVED / DECLINED / REFERRED)."""
+        application = self._repo.get(application_id)
+        if application is None:
+            raise ValueError(f"unknown application: {application_id!r}")
+        features = ApplicantFeatures(**application.features)
+        decision = decide(features)
+        record_decision(self._repo, self._audit, application_id, decision)
+        return _DISPOSITION_TO_STATE[decision.disposition].value
