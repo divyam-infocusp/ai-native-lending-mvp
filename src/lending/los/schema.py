@@ -17,6 +17,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from lending.governance.models import VersionSet
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -106,6 +108,7 @@ class Decision(BaseModel):
     scorecard_version: Optional[str] = None
     score: Optional[int] = None
     band: Optional[str] = None
+    version_set: Optional[VersionSet] = None  # full pinned version stamp (§9.4, #7)
 
 
 # ---------------------------------------------------------------------------
