@@ -45,7 +45,15 @@ class LoanOriginationWorkflow:
     async def run(self, application_id: str) -> str:
         current = HAPPY_PATH[0]
         while True:
-            if current == State.DECISION_READY:
+            if current == State.LEAD:
+                # Lead Qualification Agent (#21) replaces the stubbed LEAD → LEAD_QUALIFIED.
+                outcome = await workflow.execute_activity(
+                    OriginationActivities.lead_qualify,
+                    args=[application_id],
+                    start_to_close_timeout=timedelta(seconds=30),  # LLM call
+                )
+                next_state = State(outcome)  # LEAD_QUALIFIED | LEAD_DECLINED | LEAD_EXCEPTION
+            elif current == State.DECISION_READY:
                 # Real decision engine (#18) replaces the stubbed approve.
                 outcome = await workflow.execute_activity(
                     OriginationActivities.decide,

@@ -14,6 +14,8 @@ from enum import Enum
 class State(str, Enum):
     LEAD = "LEAD"
     LEAD_QUALIFIED = "LEAD_QUALIFIED"
+    LEAD_DECLINED = "LEAD_DECLINED"      # out-of-scope lead, declined-early (#21)
+    LEAD_EXCEPTION = "LEAD_EXCEPTION"    # lead routing uncertain → human review (#21)
     APPLICATION_SUBMITTED = "APPLICATION_SUBMITTED"
     KYC_IN_PROGRESS = "KYC_IN_PROGRESS"
     KYC_VERIFIED = "KYC_VERIFIED"
@@ -35,7 +37,9 @@ class IllegalTransition(Exception):
 
 # Adjacency list — exactly the edges in the §4 diagram.
 LEGAL_TRANSITIONS: dict[State, frozenset[State]] = {
-    State.LEAD: frozenset({State.LEAD_QUALIFIED}),
+    State.LEAD: frozenset({State.LEAD_QUALIFIED, State.LEAD_DECLINED, State.LEAD_EXCEPTION}),
+    State.LEAD_EXCEPTION: frozenset({State.LEAD_QUALIFIED, State.LEAD_DECLINED}),  # human resolves
+    State.LEAD_DECLINED: frozenset(),  # terminal
     State.LEAD_QUALIFIED: frozenset({State.APPLICATION_SUBMITTED}),
     State.APPLICATION_SUBMITTED: frozenset({State.KYC_IN_PROGRESS}),
     State.KYC_IN_PROGRESS: frozenset({State.KYC_VERIFIED, State.KYC_EXCEPTION}),

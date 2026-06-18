@@ -30,10 +30,19 @@ _DISPOSITION_TO_STATE: dict[Disposition, State] = {
     Disposition.REFER: State.REFERRED,
 }
 
+# Map the lead-qualification outcome to the §4 state the workflow advances to.
+_QUALIFY_STATUS_TO_STATE: dict[str, State] = {
+    "qualified": State.LEAD_QUALIFIED,
+    "declined_early": State.LEAD_DECLINED,
+    "manual_review": State.LEAD_EXCEPTION,
+}
+
 # Map the fine-grained §4 state to the coarse LOS status.
 _COARSE_STATUS: dict[State, ApplicationStatus] = {
     State.LEAD: ApplicationStatus.CREATED,
     State.LEAD_QUALIFIED: ApplicationStatus.IN_PROGRESS,
+    State.LEAD_DECLINED: ApplicationStatus.DECIDED,
+    State.LEAD_EXCEPTION: ApplicationStatus.EXCEPTION,
     State.APPLICATION_SUBMITTED: ApplicationStatus.IN_PROGRESS,
     State.KYC_IN_PROGRESS: ApplicationStatus.IN_PROGRESS,
     State.KYC_VERIFIED: ApplicationStatus.IN_PROGRESS,
@@ -51,9 +60,28 @@ _COARSE_STATUS: dict[State, ApplicationStatus] = {
 
 
 class OriginationActivities:
-    def __init__(self, repository: ApplicationRepository, audit: AuditStore) -> None:
+    def __init__(
+        self,
+        repository: ApplicationRepository,
+        audit: AuditStore,
+        lead_reason=None,
+    ) -> None:
         self._repo = repository
         self._audit = audit
+        # Injected fake reasoning step for the lead-qualification agent in tests;
+        # None → the agent uses its default (Gemini) at runtime.
+        self._lead_reason = lead_reason
+
+    @activity.defn
+    async def lead_qualify(self, application_id: str) -> str:
+        """Run the Lead Qualification Agent (#21) and return the §4 outcome state
+        (LEAD_QUALIFIED / LEAD_DECLINED / LEAD_EXCEPTION)."""
+        # Lazy import: keeps LangGraph out of the Temporal workflow sandbox's import
+        # graph (activities run outside the sandbox, so importing here is safe).
+        from lending.agents import qualify_lead
+
+        result = qualify_lead(self._repo, self._audit, application_id, reason=self._lead_reason)
+        return _QUALIFY_STATUS_TO_STATE[result.status].value
 
     @activity.defn
     async def advance(self, application_id: str, from_state: str, to_state: str) -> str:

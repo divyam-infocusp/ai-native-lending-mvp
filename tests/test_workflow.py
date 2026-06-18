@@ -107,13 +107,32 @@ def _seed_application(repo: ApplicationRepository, features: dict | None = None)
     return app.application_id
 
 
-async def _run_workflow(env, repo, audit, app_id) -> str:
-    activities = OriginationActivities(repo, audit)
+# Fake lead-qualification reasoning steps (no live Gemini in tests).
+def _lead_reason(output: dict):
+    return lambda context, tool_result: output
+
+
+_IN_SEGMENT = {
+    "segment_fit": "in_segment", "employment_type": "salaried",
+    "reason_code": "PROCEED", "confidence": 0.95, "reasoning": "plausible applicant",
+}
+_OUT_OF_SCOPE = {
+    "segment_fit": "out_of_segment", "employment_type": "unknown",
+    "reason_code": "OUT_OF_SCOPE_NOT_A_LOAN", "confidence": 0.95, "reasoning": "not a loan",
+}
+_UNCERTAIN = {
+    "segment_fit": "uncertain", "employment_type": "unknown",
+    "reason_code": "INSUFFICIENT_INFO", "confidence": 0.9, "reasoning": "too little info",
+}
+
+
+async def _run_workflow(env, repo, audit, app_id, lead_reason=None) -> str:
+    activities = OriginationActivities(repo, audit, lead_reason=lead_reason or _lead_reason(_IN_SEGMENT))
     async with Worker(
         env.client,
         task_queue=TASK_QUEUE,
         workflows=[LoanOriginationWorkflow],
-        activities=[activities.advance, activities.decide],
+        activities=[activities.advance, activities.decide, activities.lead_qualify],
     ):
         return await env.client.execute_workflow(
             LoanOriginationWorkflow.run,
@@ -176,6 +195,34 @@ async def test_soft_hit_applicant_is_referred():
     assert repo.get(app_id).decision.disposition.value == "refer"
 
 
+async def test_out_of_scope_lead_declined_early():
+    engine = make_engine()
+    repo = ApplicationRepository(engine)
+    audit = AuditStore(engine)
+    app_id = _seed_application(repo)
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        result = await _run_workflow(env, repo, audit, app_id, lead_reason=_lead_reason(_OUT_OF_SCOPE))
+
+    # Filtered at Step 2 — never reaches the decision stage.
+    assert result == State.LEAD_DECLINED.value
+    assert repo.get(app_id).decision is None
+    assert len([e for e in audit.reconstruct(app_id) if e.event_type == "decision"]) == 0
+
+
+async def test_uncertain_lead_parks_in_exception():
+    engine = make_engine()
+    repo = ApplicationRepository(engine)
+    audit = AuditStore(engine)
+    app_id = _seed_application(repo)
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        result = await _run_workflow(env, repo, audit, app_id, lead_reason=_lead_reason(_UNCERTAIN))
+
+    assert result == State.LEAD_EXCEPTION.value
+    assert repo.get(app_id).decision is None
+
+
 async def test_each_transition_emits_exactly_one_audit_event():
     engine = make_engine()
     repo = ApplicationRepository(engine)
@@ -208,14 +255,14 @@ async def test_workflow_replay_is_deterministic():
     repo = ApplicationRepository(engine)
     audit = AuditStore(engine)
     app_id = _seed_application(repo)
-    activities = OriginationActivities(repo, audit)
+    activities = OriginationActivities(repo, audit, lead_reason=_lead_reason(_IN_SEGMENT))
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with Worker(
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[LoanOriginationWorkflow],
-            activities=[activities.advance, activities.decide],
+            activities=[activities.advance, activities.decide, activities.lead_qualify],
         ):
             handle = await env.client.start_workflow(
                 LoanOriginationWorkflow.run,

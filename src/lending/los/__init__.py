@@ -1,4 +1,3 @@
-from .api import create_app
 from .repository import ApplicationRepository, make_engine
 from .schema import (
     Application,
@@ -27,4 +26,15 @@ __all__ = [
     "Decision",
     "FieldConfidence",
     "Kyc",
+    "create_app",
 ]
+
+
+def __getattr__(name: str):
+    # Lazy: importing create_app pulls FastAPI, which must NOT be dragged into the
+    # Temporal workflow sandbox via `import lending.los.schema`. Load it on demand.
+    if name == "create_app":
+        from .api import create_app
+
+        return create_app
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
