@@ -1,0 +1,7 @@
+# Minimal Temporal dynamic config for the local demo/auto-setup server.
+limit.maxIDLength:
+  - value: 255
+    constraints: {}
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true
+    constraints: {}

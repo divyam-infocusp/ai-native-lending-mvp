@@ -1,0 +1,79 @@
+# Demo/pilot harness (#31) — one command to run the whole backend stack.
+# NOT production: no HA, no scale, no secrets management.
+#   docker compose up --build
+# Then drive the pipeline:
+#   docker compose exec worker python -m lending.demo.run_demo
+name: ai-native-lending-demo
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: lending
+      POSTGRES_PASSWORD: lending
+      POSTGRES_DB: lending
+    ports: ["${POSTGRES_PORT:-5432}:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lending"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DB=postgres12
+      - DB_PORT=5432
+      - POSTGRES_USER=lending
+      - POSTGRES_PWD=lending
+      - POSTGRES_SEEDS=postgres
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+    ports: ["${TEMPORAL_PORT:-7233}:7233"]
+    volumes:
+      - ./deploy/temporal/dynamicconfig:/etc/temporal/config/dynamicconfig
+
+  temporal-ui:
+    image: temporalio/ui:2.34.0
+    depends_on: [temporal]
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+    ports: ["${TEMPORAL_UI_PORT:-8088}:8080"]
+
+  api:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://lending:lending@postgres:5432/lending
+      ADAPTER_MODE: mock
+      PILOT_ENABLED: "true"
+    ports: ["${API_PORT:-8000}:8000"]
+    command: ["uvicorn", "lending.los.asgi:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  worker:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+psycopg://lending:lending@postgres:5432/lending
+      TEMPORAL_ADDRESS: temporal:7233
+      ADAPTER_MODE: mock
+      PILOT_ENABLED: "true"
+      # Gemini (agents) — sourced from the host env / .env; defaults match the code.
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      MODEL_NAME: ${MODEL_NAME:-gemini-3-flash-preview}
+      MODEL_NAME_LITE: ${MODEL_NAME_LITE:-gemini-3.1-flash-lite-preview}
+    command: ["python", "-m", "lending.workflow.worker"]
+    restart: on-failure
+
+volumes:
+  pgdata:

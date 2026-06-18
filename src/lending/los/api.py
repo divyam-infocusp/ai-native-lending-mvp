@@ -25,6 +25,10 @@ def create_app(repository: ApplicationRepository | None = None) -> FastAPI:
     def get_repo() -> ApplicationRepository:
         return repo
 
+    @app.get("/health")
+    def health() -> dict:
+        return {"status": "ok"}
+
     @app.post("/applications", status_code=201, response_model=Application)
     def create_application(
         payload: ApplicationCreate,
