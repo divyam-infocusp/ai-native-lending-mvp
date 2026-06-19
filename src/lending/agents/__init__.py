@@ -6,6 +6,13 @@ from .lead_qualification import (
     qualify_lead,
 )
 from .llm import gemini_reason, model_lite, model_pro
+from .onboarding import (
+    OnboardingCopilot,
+    OnboardingResponse,
+    OnboardingTurn,
+    missing_fields,
+    register_document,
+)
 
 __all__ = [
     "LeadQualification",
@@ -16,4 +23,9 @@ __all__ = [
     "gemini_reason",
     "model_lite",
     "model_pro",
+    "OnboardingCopilot",
+    "OnboardingResponse",
+    "OnboardingTurn",
+    "missing_fields",
+    "register_document",
 ]

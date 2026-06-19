@@ -119,8 +119,11 @@ class Decision(BaseModel):
 class Applicant(BaseModel):
     full_name: str
     pan: Optional[str] = None
+    aadhaar: Optional[str] = None
+    date_of_birth: Optional[str] = None
     mobile: Optional[str] = None
     email: Optional[str] = None
+    current_address: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
