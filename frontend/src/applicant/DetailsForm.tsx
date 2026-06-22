@@ -2,7 +2,25 @@
 // documents, then continue. Faster than the multi-turn chat (great for demos).
 import { useState } from "react";
 import { api, REQUIRED_DOCUMENTS } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
 import { ErrorNote } from "../components/ui";
+
+// Demo convenience: a complete, valid sample so you can run a scenario without
+// re-typing every field. The scenario selector drives the actual outcome.
+const DEFAULTS: Record<string, string> = {
+  date_of_birth: "1990-05-10",
+  pan: "ABCDE1234F",
+  aadhaar: "234567890124",
+  mobile: "9876543210",
+  current_address: "12 MG Road, Pune 411001",
+  employment_type: "salaried",
+  employer_name: "Infosys",
+  employment_tenure_months: "48",
+  monthly_income: "85000",
+  loan_amount_requested: "300000",
+  loan_tenure_months: "36",
+  loan_purpose: "home renovation",
+};
 
 interface FieldDef {
   key: string;
@@ -50,14 +68,24 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
 
 export function DetailsForm({
   appId,
+  prefill = false,
   onDone,
   onSwitchToChat,
 }: {
   appId: string;
+  prefill?: boolean;
   onDone: () => void;
   onSwitchToChat: () => void;
 }) {
-  const [values, setValues] = useState<Record<string, string>>({});
+  const { user } = useAuth();
+  // In demo mode, pre-fill with a complete valid sample so a run is one click.
+  // Otherwise start blank (a real applicant fills their own details); the full
+  // name carries over from the signed-in applicant either way.
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    prefill
+      ? { ...DEFAULTS, full_name: user?.name || "Ravi Kumar" }
+      : { full_name: user?.name || "" },
+  );
   const [uploaded, setUploaded] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +96,21 @@ export function DetailsForm({
     try {
       await api.uploadDocument(appId, doc, `mock://${appId}/${doc}.pdf`);
       setUploaded((s) => new Set(s).add(doc));
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  async function uploadAll() {
+    const next = new Set(uploaded);
+    try {
+      for (const doc of REQUIRED_DOCUMENTS) {
+        if (!next.has(doc)) {
+          await api.uploadDocument(appId, doc, `mock://${appId}/${doc}.pdf`);
+          next.add(doc);
+        }
+      }
+      setUploaded(next);
     } catch (e: any) {
       setError(e.message);
     }
@@ -135,8 +178,15 @@ export function DetailsForm({
         ))}
 
         <div>
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">
-            Documents ({uploaded.size}/{REQUIRED_DOCUMENTS.length})
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Documents ({uploaded.size}/{REQUIRED_DOCUMENTS.length})
+            </div>
+            {uploaded.size < REQUIRED_DOCUMENTS.length && (
+              <button onClick={uploadAll} className="text-xs text-brand hover:underline font-medium">
+                Attach all
+              </button>
+            )}
           </div>
           <ul className="space-y-1.5 rounded-xl border border-slate-200 p-3 bg-slate-50/60">
             {REQUIRED_DOCUMENTS.map((doc) => (

@@ -7,6 +7,8 @@ import { ApplicantHome } from "./applicant/ApplicantHome";
 import { ApplicationStatus } from "./applicant/ApplicationStatus";
 import { PipelineList } from "./lender/PipelineList";
 import { ApplicationDetail } from "./lender/ApplicationDetail";
+import { ApplicationReview } from "./lender/ApplicationReview";
+import { PolicyView } from "./lender/PolicyView";
 
 function Home() {
   const { user, loading } = useAuth();
@@ -62,11 +64,31 @@ export default function App() {
         }
       />
       <Route
+        path="/pipeline/policy"
+        element={
+          <RequireRole role="underwriter">
+            <Layout>
+              <PolicyView />
+            </Layout>
+          </RequireRole>
+        }
+      />
+      <Route
         path="/pipeline/:id"
         element={
           <RequireRole role="underwriter">
             <Layout>
               <ApplicationDetail />
+            </Layout>
+          </RequireRole>
+        }
+      />
+      <Route
+        path="/pipeline/:id/review"
+        element={
+          <RequireRole role="underwriter">
+            <Layout>
+              <ApplicationReview />
             </Layout>
           </RequireRole>
         }

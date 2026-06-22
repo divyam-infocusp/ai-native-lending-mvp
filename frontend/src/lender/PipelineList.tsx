@@ -36,7 +36,10 @@ export function PipelineList() {
           <h1 className="text-2xl font-semibold text-slate-900">Underwriting pipeline</h1>
           <p className="text-slate-500 text-sm mt-0.5">Live view of every application and where it stands.</p>
         </div>
-        <button onClick={refresh} className="btn-ghost text-sm">↻ Refresh</button>
+        <div className="flex items-center gap-2">
+          <Link to="/pipeline/policy" className="btn-ghost text-sm">📋 Lending policy</Link>
+          <button onClick={refresh} className="btn-ghost text-sm">↻ Refresh</button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">

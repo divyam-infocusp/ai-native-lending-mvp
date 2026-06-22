@@ -98,6 +98,21 @@ export interface OnboardingTurn {
   collected: Record<string, any>;
 }
 
+export interface PolicyView {
+  version: string;
+  rules: { reason_code: string; label: string; threshold: number | null; unit: string; description: string; type: "hard" | "soft" }[];
+  bands: { band: string; min_score: number; rate_pct: number | null; max_amount: number | null }[];
+  scorecard: { min_score: number; income_haircut_pct: number };
+  pricing: {
+    tenure_min_months: number; tenure_max_months: number; affordability_dti: number;
+    processing_fee_pct: number; gst_pct: number; offer_validity_days: number;
+  };
+  documents: {
+    min_confidence: number; min_ocr_conf: number; name_match_min_ratio: number;
+    income_match_tolerance_pct: number; key_fields: string[];
+  };
+}
+
 export const REQUIRED_DOCUMENTS = [
   "identity_proof",
   "address_proof",
@@ -124,14 +139,20 @@ export const api = {
     }),
   me: () => req<AuthUser>("/auth/me"),
 
+  // Lending policy (read-only) — the live thresholds the engine applies.
+  getPolicy: () => req<PolicyView>("/policy"),
+
   // applications
   listApplications: () =>
     req<{ applications: ApplicationSummary[] }>("/applications").then((r) => r.applications),
   getApplication: (id: string) => req<Application>(`/applications/${id}`),
-  createApplication: (fullName: string) =>
+  createApplication: (fullName: string, demoScenario?: string) =>
     req<Application>("/applications", {
       method: "POST",
-      body: JSON.stringify({ applicant: { full_name: fullName } }),
+      body: JSON.stringify({
+        applicant: { full_name: fullName },
+        ...(demoScenario ? { features: { demo_scenario: demoScenario } } : {}),
+      }),
     }),
   onboardingMessage: (id: string, message: string | null) =>
     req<OnboardingTurn>(`/applications/${id}/onboarding/message`, {
@@ -157,10 +178,11 @@ export const api = {
   getExplanation: (id: string) =>
     req<{ reason_codes: string[]; text: string }>(`/applications/${id}/explanation`),
 
-  // Ops Console (#15): resolve a parked case (underwriter only).
-  resolve: (id: string, toState: string, reasonCode: string) =>
+  // Ops Console (#15): resolve a parked case (underwriter only). `note` is a
+  // required human justification, recorded in the audit trail.
+  resolve: (id: string, toState: string, reasonCode: string, note: string) =>
     req<{ resolved_to: string; status: string }>(`/applications/${id}/resolve`, {
       method: "POST",
-      body: JSON.stringify({ to_state: toState, reason_code: reasonCode }),
+      body: JSON.stringify({ to_state: toState, reason_code: reasonCode, note }),
     }),
 };

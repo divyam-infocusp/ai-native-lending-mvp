@@ -11,6 +11,17 @@ interface ChatMsg {
   text: string;
 }
 
+// Demo-only: pick a scenario to exercise each origination path on demand. The tag
+// rides on the application and the mock bureau/OCR/lead steps honor it (no rebuild).
+const DEMO_SCENARIOS: { value: string; label: string }[] = [
+  { value: "clean", label: "Clean — happy path → Offer" },
+  { value: "high_dti", label: "High DTI → Referred (underwriter decides)" },
+  { value: "low_cibil", label: "Low CIBIL → Declined (hard knockout)" },
+  { value: "thin_file", label: "Thin file → UW exception (re-run assessment)" },
+  { value: "doc_mismatch", label: "Document mismatch → KYC exception" },
+  { value: "lead_review", label: "Lead uncertain → Lead exception" },
+];
+
 function Panel({ children }: { children: React.ReactNode }) {
   return <div className="card p-6 animate-fade-in">{children}</div>;
 }
@@ -32,6 +43,8 @@ export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
   const [attachOpen, setAttachOpen] = useState(false);
   const [uploaded, setUploaded] = useState<Set<string>>(new Set());
   const [formMode, setFormMode] = useState(false);   // form-fill alternative (#42)
+  const [demoMode, setDemoMode] = useState(false);   // off = normal application
+  const [scenario, setScenario] = useState("clean"); // demo scenario selector
 
   function fail(e: any) {
     setError(e.message ?? String(e));
@@ -41,7 +54,7 @@ export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
   async function start() {
     setBusy(true);
     try {
-      const created = await api.createApplication(user?.name || "Applicant");
+      const created = await api.createApplication(user?.name || "Applicant", demoMode ? scenario : undefined);
       setAppId(created.application_id);
       setStep("chat");
     } catch (e) {
@@ -135,6 +148,33 @@ export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
             Our copilot will guide you through a short conversation, verify your details, and give
             you a decision — often within minutes.
           </p>
+          <label className="mt-5 flex items-center gap-2 text-sm text-slate-600 select-none cursor-pointer">
+            <input
+              type="checkbox"
+              checked={demoMode}
+              onChange={(e) => setDemoMode(e.target.checked)}
+              className="h-4 w-4 accent-brand"
+            />
+            🧪 Demo mode — pick a scenario &amp; prefill the form (testing)
+          </label>
+
+          {demoMode && (
+            <div className="mt-3 rounded-xl border border-dashed border-amber-300 bg-amber-50/50 p-3">
+              <label className="block text-xs font-semibold text-amber-700 mb-1">Scenario</label>
+              <select
+                value={scenario}
+                onChange={(e) => setScenario(e.target.value)}
+                className="field w-full"
+              >
+                {DEMO_SCENARIOS.map((s) => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </select>
+              <p className="text-[11px] text-amber-600/80 mt-1">
+                Drives the mock bureau / documents so you can trigger each path.
+              </p>
+            </div>
+          )}
           <button onClick={start} disabled={busy} className="btn-primary mt-6">
             {busy ? "Starting…" : "Start application →"}
           </button>
@@ -145,6 +185,7 @@ export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
         <Panel>
           <DetailsForm
             appId={appId}
+            prefill={demoMode}
             onDone={() => setStep("consent")}
             onSwitchToChat={() => setFormMode(false)}
           />

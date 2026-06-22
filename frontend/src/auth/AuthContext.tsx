@@ -33,6 +33,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
+  // Re-sync identity with the (shared, cross-tab) token whenever the tab regains
+  // focus. The token lives in localStorage — shared across tabs — while `user` is
+  // per-tab in-memory state. Without this, a tab can show one user while its token
+  // silently belongs to another (e.g. a second tab logged in as a different role),
+  // letting an applicant's action run under an underwriter's token. Re-validating
+  // on focus makes the UI reflect the real session so the route guard can react.
+  useEffect(() => {
+    function resync() {
+      const token = tokenStore.get();
+      if (!token) {
+        setUser(null);
+        return;
+      }
+      api.me().then(setUser).catch(() => {
+        tokenStore.clear();
+        setUser(null);
+      });
+    }
+    function onVisible() {
+      if (!document.hidden) resync();
+    }
+    window.addEventListener("focus", resync);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", resync);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
   const value = useMemo<AuthState>(
     () => ({
       user,
