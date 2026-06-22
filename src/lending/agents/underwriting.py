@@ -76,7 +76,9 @@ def assemble_features(application, report, *, today: Optional[date] = None) -> t
     income = feats.get("monthly_income") or feats.get("gross_monthly_income")
     is_salaried = feats.get("is_salaried")
     if is_salaried is None and feats.get("employment_type"):
-        is_salaried = feats["employment_type"] == "salaried"
+        # Case/format-insensitive: "Salaried", "SALARIED", "salaried employee" all
+        # count; "self_employed" / "unemployed" / "non-salaried" do not (#43).
+        is_salaried = str(feats["employment_type"]).strip().lower().startswith("salaried")
 
     age = feats.get("age")
     if age is None:

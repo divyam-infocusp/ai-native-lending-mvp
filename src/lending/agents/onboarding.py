@@ -183,6 +183,21 @@ def _apply_updates(application, extracted: dict) -> None:
     application.features = feats
 
 
+def apply_details(repository, application_id: str, fields: dict):
+    """Apply a batch of applicant-supplied details directly (the form-fill path,
+    #42) — an alternative to the conversational copilot. Fields are coerced via
+    the same typed schema, routed to applicant/features, and persisted. Returns
+    the updated application; completeness is unchanged from the copilot's view."""
+    application = repository.get(application_id)
+    if application is None:
+        raise ValueError(f"unknown application: {application_id!r}")
+    coerced = ExtractedFields(**fields).model_dump(exclude_none=True)
+    _apply_updates(application, coerced)
+    application.updated_at = _utcnow()
+    repository.save(application)
+    return application
+
+
 class _ConvState(TypedDict, total=False):
     messages: Annotated[list, operator.add]   # durable conversation history
     context: dict                              # fresh per turn (collected / missing)

@@ -71,6 +71,31 @@ def test_onboarding_message_runs_a_copilot_turn():
 # Consent
 # ---------------------------------------------------------------------------
 
+def test_submit_details_applies_fields_and_reports_completeness():
+    client, repo, *_ = _make()
+    app_id = _create(client)
+    # Form-fill path (#42): set the data fields directly.
+    fields = {
+        "full_name": "Ravi Kumar", "date_of_birth": "1990-05-10", "pan": "ABCDE1234F",
+        "aadhaar": "234567890124", "mobile": "9876543210", "current_address": "1 MG Rd, Pune",
+        "employment_type": "salaried", "employer_name": "Infosys",
+        "employment_tenure_months": "48", "monthly_income": "85000",
+        "loan_amount_requested": "300000", "loan_tenure_months": "36", "loan_purpose": "renovation",
+    }
+    resp = client.post(f"/applications/{app_id}/details", json={"fields": fields})
+    assert resp.status_code == 200
+    body = resp.json()
+    # all data fields present → only documents remain
+    assert body["complete"] is False
+    assert all(m.startswith("document:") for m in body["missing"])
+
+    app = repo.get(app_id)
+    assert app.applicant.full_name == "Ravi Kumar"
+    assert app.applicant.pan == "ABCDE1234F"
+    assert app.features["monthly_income"] == 85000      # coerced to number
+    assert app.features["employment_tenure_months"] == 48
+
+
 def test_capture_consent_reflected_on_aggregate():
     client, repo, *_ = _make()
     app_id = _create(client)

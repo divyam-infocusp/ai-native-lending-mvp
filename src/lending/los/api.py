@@ -37,6 +37,10 @@ class OnboardingMessageIn(BaseModel):
     message: Optional[str] = None      # None on the first (greeting) turn
 
 
+class DetailsIn(BaseModel):
+    fields: dict
+
+
 class ConsentIn(BaseModel):
     purpose: str
 
@@ -217,6 +221,22 @@ def create_app(
             "missing": resp.missing,
             "collected": resp.collected,
         }
+
+    @app.post("/applications/{application_id}/details")
+    def submit_details(application_id: str, body: DetailsIn,
+                      user: User = Depends(current_user)) -> dict:
+        """Form-fill alternative to the copilot (#42): apply structured details
+        directly and return completeness."""
+        from lending.agents import apply_details
+        from lending.agents.onboarding import missing_fields
+
+        require_authorized(application_id, user)
+        try:
+            application = apply_details(repo, application_id, body.fields)
+        except Exception as err:  # pydantic coercion / validation
+            raise HTTPException(status_code=422, detail=str(err))
+        remaining = missing_fields(application)
+        return {"application_id": application_id, "complete": not remaining, "missing": remaining}
 
     @app.post("/applications/{application_id}/consent")
     def capture_consent(application_id: str, body: ConsentIn,

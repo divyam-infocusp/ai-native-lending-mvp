@@ -138,6 +138,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ message }),
     }),
+  submitDetails: (id: string, fields: Record<string, any>) =>
+    req<{ complete: boolean; missing: string[] }>(`/applications/${id}/details`, {
+      method: "POST",
+      body: JSON.stringify({ fields }),
+    }),
   captureConsent: (id: string, purpose: string) =>
     req<unknown>(`/applications/${id}/consent`, { method: "POST", body: JSON.stringify({ purpose }) }),
   uploadDocument: (id: string, docType: string, reference?: string) =>

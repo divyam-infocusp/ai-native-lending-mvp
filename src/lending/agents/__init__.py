@@ -31,6 +31,7 @@ from .onboarding import (
     OnboardingCopilot,
     OnboardingResponse,
     OnboardingTurn,
+    apply_details,
     missing_fields,
     register_document,
 )
@@ -49,6 +50,7 @@ __all__ = [
     "OnboardingTurn",
     "missing_fields",
     "register_document",
+    "apply_details",
     "DocIntelResult",
     "verify_documents",
     "evaluate",

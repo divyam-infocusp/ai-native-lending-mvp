@@ -96,17 +96,24 @@ def test_assemble_derives_age_from_dob_when_age_absent():
     assert features.age == 32      # 2026 - 1994
 
 
-def test_assemble_infers_is_salaried_from_employment_type():
+import pytest
+
+
+@pytest.mark.parametrize("emp,expected", [
+    ("salaried", True), ("Salaried", True), ("SALARIED", True),
+    ("salaried employee", True), ("self_employed", False),
+    ("self-employed", False), ("unemployed", False),
+])
+def test_assemble_infers_is_salaried_case_insensitively(emp, expected):
     repo, _ = _stores()
     stated = {**STATED}
     del stated["is_salaried"]
-    stated["employment_type"] = "salaried"
+    stated["employment_type"] = emp
     app_id = _seed(repo, stated)
-    app = repo.get(app_id)
     from lending.adapters import pull_bureau
-    features, missing = assemble_features(app, pull_bureau(_bureau(), app_id))
+    features, missing = assemble_features(repo.get(app_id), pull_bureau(_bureau(), app_id))
     assert missing == []
-    assert features.is_salaried is True
+    assert features.is_salaried is expected
 
 
 # ---------------------------------------------------------------------------

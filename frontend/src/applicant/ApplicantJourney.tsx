@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api, BUREAU_PULL_PURPOSE, REQUIRED_DOCUMENTS } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { Spinner, ErrorNote } from "../components/ui";
+import { DetailsForm } from "./DetailsForm";
 
 type Step = "start" | "chat" | "consent";
 interface ChatMsg {
@@ -30,6 +31,7 @@ export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
 
   const [attachOpen, setAttachOpen] = useState(false);
   const [uploaded, setUploaded] = useState<Set<string>>(new Set());
+  const [formMode, setFormMode] = useState(false);   // form-fill alternative (#42)
 
   function fail(e: any) {
     setError(e.message ?? String(e));
@@ -139,9 +141,25 @@ export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
         </Panel>
       )}
 
-      {step === "chat" && (
+      {step === "chat" && formMode && appId && (
         <Panel>
-          <h1 className="text-lg font-semibold text-slate-900 mb-3">Tell us about yourself</h1>
+          <DetailsForm
+            appId={appId}
+            onDone={() => setStep("consent")}
+            onSwitchToChat={() => setFormMode(false)}
+          />
+        </Panel>
+      )}
+
+      {step === "chat" && !formMode && (
+        <Panel>
+          <h1 className="text-lg font-semibold text-slate-900 mb-1">Tell us about yourself</h1>
+          <p className="text-sm text-slate-500 mb-3">
+            Chat with our copilot — or{" "}
+            <button onClick={() => setFormMode(true)} className="text-brand font-medium hover:underline">
+              fill a quick form instead →
+            </button>
+          </p>
           <div ref={scroller} className="space-y-3 max-h-[45vh] overflow-y-auto mb-3 pr-1">
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "gap-2"}`}>
