@@ -157,6 +157,10 @@ export const api = {
   getExplanation: (id: string) =>
     req<{ reason_codes: string[]; text: string }>(`/applications/${id}/explanation`),
 
-  // ---- Ops actions (#15) — seam for the exception/override console -------
-  // Not wired yet (resolveException / applyOverride land here when #15 ships).
+  // Ops Console (#15): resolve a parked case (underwriter only).
+  resolve: (id: string, toState: string, reasonCode: string) =>
+    req<{ resolved_to: string; status: string }>(`/applications/${id}/resolve`, {
+      method: "POST",
+      body: JSON.stringify({ to_state: toState, reason_code: reasonCode }),
+    }),
 };

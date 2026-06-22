@@ -5,6 +5,77 @@ import { StateGraph } from "../components/StateGraph";
 import { AuditTrail } from "../components/AuditTrail";
 import { Card, Pill, Spinner, ErrorNote, stateTone } from "../components/ui";
 
+// Reason-coded resolve actions per parked state (match RESOLVE_REASON_CODES + the
+// §4 legal transitions on the backend, #15).
+interface ResolveAction {
+  to_state: string;
+  reason_code: string;
+  label: string;
+  danger?: boolean;
+}
+const RESOLUTIONS: Record<string, ResolveAction[]> = {
+  LEAD_EXCEPTION: [
+    { to_state: "LEAD_QUALIFIED", reason_code: "ELIGIBLE_ON_REVIEW", label: "Qualify lead" },
+    { to_state: "LEAD_DECLINED", reason_code: "NOT_GENUINE", label: "Reject — not genuine", danger: true },
+  ],
+  KYC_EXCEPTION: [
+    { to_state: "KYC_VERIFIED", reason_code: "DOC_REVERIFIED", label: "Mark documents verified" },
+  ],
+  UW_EXCEPTION: [
+    { to_state: "DECISION_READY", reason_code: "DATA_SUPPLEMENTED", label: "Proceed to decision" },
+  ],
+  REFERRED: [
+    { to_state: "APPROVED", reason_code: "MANUAL_APPROVE", label: "Approve" },
+    { to_state: "DECLINED", reason_code: "MANUAL_DECLINE", label: "Decline", danger: true },
+  ],
+};
+
+function ResolvePanel({ app, onResolved }: { app: Application; onResolved: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const actions = RESOLUTIONS[app.workflow_state ?? ""] ?? [];
+
+  if (actions.length === 0) {
+    return <p className="text-sm text-slate-400">No actions required.</p>;
+  }
+
+  async function run(a: ResolveAction) {
+    setBusy(a.to_state);
+    setError(null);
+    try {
+      await api.resolve(app.application_id, a.to_state, a.reason_code);
+      onResolved();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div>
+      <p className="text-sm text-amber-700 mb-3">
+        Parked for review. Resolve with a bounded reason — recorded against your identity.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {actions.map((a) => (
+          <button
+            key={a.to_state}
+            onClick={() => run(a)}
+            disabled={busy !== null}
+            className={a.danger
+              ? "btn bg-rose-600 text-white hover:bg-rose-700"
+              : "btn-primary"}
+          >
+            {busy === a.to_state ? "Resolving…" : a.label}
+          </button>
+        ))}
+      </div>
+      {error && <div className="mt-3"><ErrorNote>{error}</ErrorNote></div>}
+    </div>
+  );
+}
+
 function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return (
     <>
@@ -115,15 +186,9 @@ export function ApplicationDetail() {
             </Card>
           )}
 
-          {/* Ops actions (#15) — resolve/override land here. Read-only for now. */}
+          {/* Ops Console actions (#15) — reason-coded resolve for parked cases. */}
           <Card title="Actions">
-            {app && app.workflow_state?.endsWith("EXCEPTION") ? (
-              <p className="text-sm text-amber-700">
-                Parked for review. Resolve / override actions arrive with the Ops Console (#15).
-              </p>
-            ) : (
-              <p className="text-sm text-slate-400">No actions required.</p>
-            )}
+            {app ? <ResolvePanel app={app} onResolved={refresh} /> : null}
           </Card>
         </div>
 
