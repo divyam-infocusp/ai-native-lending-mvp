@@ -62,3 +62,60 @@ def make_mock_ocr_harness(fixtures: dict | None = None) -> AdapterHarness:
     harness = AdapterHarness()
     harness.register(MockAdapter(OCR_PROVIDER, fixtures or _CLEAN_FIXTURES))
     return harness
+
+
+# ---------------------------------------------------------------------------
+# Reflective extractor — derives the "OCR" fields from the application's OWN
+# data (the name / PAN / income the applicant actually provided), with valid-
+# format fallbacks. This keeps the verified profile consistent with the real
+# applicant (no fixed "Priya Sharma" for everyone) until the real OCR/KYC
+# adapter (#9) lands.
+# ---------------------------------------------------------------------------
+import re
+
+_FALLBACK_AADHAAR = "234567890124"   # passes Verhoeff
+_FALLBACK_PAN = "ABCDE1234F"
+_PAN_RE = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
+
+
+def _valid_pan(value) -> str:
+    return str(value).upper() if value and _PAN_RE.match(str(value).upper()) else _FALLBACK_PAN
+
+
+def _valid_aadhaar(value) -> str:
+    from lending.confidence import validate_aadhaar
+
+    return str(value) if value and validate_aadhaar(str(value)).valid else _FALLBACK_AADHAAR
+
+
+def make_reflective_ocr_extractor(repository):
+    """Build an extractor that echoes the application's own data as the extracted
+    fields (same values across documents, so cross-checks agree)."""
+
+    def extract(application_id: str, doc_type: str) -> dict:
+        app = repository.get(application_id)
+        applicant = getattr(app, "applicant", None)
+        feats = (getattr(app, "features", None) or {}) if app else {}
+
+        name = (getattr(applicant, "full_name", None) or "Applicant")
+        dob = (getattr(applicant, "date_of_birth", None) or "1994-02-11")
+        pan = _valid_pan(getattr(applicant, "pan", None))
+        aadhaar = _valid_aadhaar(getattr(applicant, "aadhaar", None))
+        address = (getattr(applicant, "current_address", None) or "12 MG Road, Pune 411001")
+        employer = feats.get("employer_name") or "Acme Corp"
+        gross = float(feats.get("monthly_income") or feats.get("gross_monthly_income") or 90_000)
+        net = round(gross * 0.8)
+
+        per_doc = {
+            "identity_proof": {"name": _rec(name), "date_of_birth": _rec(dob),
+                               "aadhaar": _rec(aadhaar), "address": _rec(address)},
+            "address_proof": {"name": _rec(name), "date_of_birth": _rec(dob), "pan": _rec(pan)},
+            "salary_slips": {"name": _rec(name), "employer_name": _rec(employer),
+                             "gross_monthly_income": _rec(gross), "net_monthly_income": _rec(net)},
+            "bank_statement": {"name": _rec(name), "net_monthly_income": _rec(net)},
+            "form16": {"name": _rec(name), "pan": _rec(pan), "employer_name": _rec(employer),
+                       "gross_monthly_income": _rec(gross)},
+        }
+        return per_doc.get(doc_type, {})
+
+    return extract

@@ -344,7 +344,29 @@ def test_mock_ocr_harness_drives_a_verified_application():
 def test_worker_build_doc_extractor_mock_vs_live():
     from lending.workflow.worker import build_doc_extractor
 
-    extract = build_doc_extractor("mock")
+    repo, _ = _stores()
+    extract = build_doc_extractor("mock", repo)
+    # unknown application → valid-format fallbacks (so KYC can still run)
     assert extract("app-1", "identity_proof")["aadhaar"]["value"] == VALID_AADHAAR
     with pytest.raises(NotImplementedError, match="#9"):
-        build_doc_extractor("live")
+        build_doc_extractor("live", repo)
+
+
+def test_reflective_ocr_echoes_real_applicant_name():
+    """The mock OCR must reflect the actual applicant, not a fixed profile (#41)."""
+    from lending.adapters.ocr_mock import make_reflective_ocr_extractor
+
+    repo, audit = _stores()
+    app = Application(applicant=Applicant(full_name="Ravi Kumar"))
+    app.features = {"documents": {d: {"uploaded": True, "verified": None} for d in
+                                  ["identity_proof", "address_proof", "salary_slips", "bank_statement", "form16"]},
+                    "monthly_income": 75000, "employer_name": "Infosys"}
+    repo.save(app)
+
+    extract = make_reflective_ocr_extractor(repo)
+    assert extract(app.application_id, "identity_proof")["name"]["value"] == "Ravi Kumar"
+
+    result = verify_documents(repo, audit, app.application_id, extract=extract)
+    assert result.status == "verified"
+    # the verified profile keeps the REAL applicant name (no fixed "Priya Sharma")
+    assert repo.get(app.application_id).applicant.full_name == "Ravi Kumar"

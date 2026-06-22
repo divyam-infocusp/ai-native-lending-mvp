@@ -21,18 +21,17 @@ from .activities import OriginationActivities
 from .workflow import TASK_QUEUE, LoanOriginationWorkflow
 
 
-def build_doc_extractor(adapter_mode: str):
+def build_doc_extractor(adapter_mode: str, repository):
     """Document extractor (OCR/KYC) for the Document Intelligence Agent (#19).
 
-    `mock` → a placeholder mock OCR harness so the demo runs end-to-end; `live` →
-    the real OCR/KYC adapters, which arrive in #9 (not built yet)."""
-    from lending.agents import make_ocr_extractor
-
+    `mock` → a reflective extractor that derives the "OCR" fields from the
+    application's own data (so the verified profile matches the real applicant);
+    `live` → the real OCR/KYC adapters, which arrive in #9 (not built yet)."""
     if adapter_mode == "live":
         raise NotImplementedError("live OCR/KYC adapter not built yet (#9); use ADAPTER_MODE=mock")
-    from lending.adapters.ocr_mock import make_mock_ocr_harness
+    from lending.adapters.ocr_mock import make_reflective_ocr_extractor
 
-    return make_ocr_extractor(make_mock_ocr_harness())
+    return make_reflective_ocr_extractor(repository)
 
 
 def build_bureau_harness(adapter_mode: str):
@@ -60,11 +59,12 @@ def build_delivery_harnesses(adapter_mode: str):
 
 def build_activities(database_url: str, adapter_mode: str = "mock") -> OriginationActivities:
     engine = make_engine(database_url)
+    repo = ApplicationRepository(engine)
     notify_harness, esign_harness = build_delivery_harnesses(adapter_mode)
     return OriginationActivities(
-        ApplicationRepository(engine),
+        repo,
         AuditStore(engine),
-        doc_extract=build_doc_extractor(adapter_mode),
+        doc_extract=build_doc_extractor(adapter_mode, repo),
         bureau_harness=build_bureau_harness(adapter_mode),
         notify_harness=notify_harness,
         esign_harness=esign_harness,
