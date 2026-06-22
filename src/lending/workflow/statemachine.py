@@ -73,6 +73,24 @@ HAPPY_PATH: tuple[State, ...] = (
 )
 
 
+# States where the workflow parks for a human decision (#15) — the three
+# exception states + REFERRED (borderline → underwriter approves/declines).
+AWAITING_RESOLUTION: frozenset[State] = frozenset({
+    State.LEAD_EXCEPTION, State.KYC_EXCEPTION, State.UW_EXCEPTION, State.REFERRED,
+})
+
+# Bounded, structured reason codes a reviewer must pick when resolving a parked
+# case (no free text, §16.10).
+RESOLVE_REASON_CODES: frozenset[str] = frozenset({
+    "DOC_REVERIFIED",       # KYC exception — documents re-verified
+    "DATA_SUPPLEMENTED",    # UW exception — missing data supplied
+    "ELIGIBLE_ON_REVIEW",   # lead exception — genuine, proceed
+    "NOT_GENUINE",          # lead exception — spam/not a loan, reject
+    "MANUAL_APPROVE",       # referred — underwriter approves
+    "MANUAL_DECLINE",       # referred/exception — underwriter declines
+})
+
+
 def is_legal(from_state: State, to_state: State) -> bool:
     return to_state in LEGAL_TRANSITIONS.get(from_state, frozenset())
 

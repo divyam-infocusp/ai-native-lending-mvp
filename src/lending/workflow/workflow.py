@@ -19,15 +19,9 @@ from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
     from .activities import OriginationActivities
-    from .statemachine import HAPPY_PATH, State, is_legal
+    from .statemachine import AWAITING_RESOLUTION, HAPPY_PATH, State, is_legal
 
 TASK_QUEUE = "loan-origination"
-
-# States where the workflow waits for a human decision before continuing (#15):
-# the three exception states + REFERRED (borderline → underwriter approves/declines).
-_PARK_STATES = frozenset({
-    State.LEAD_EXCEPTION, State.KYC_EXCEPTION, State.UW_EXCEPTION, State.REFERRED,
-})
 
 # Stub next-state policy, derived from the canonical happy path so there is one
 # source of truth. A state with no entry here ends the run (e.g. OFFER_GENERATED
@@ -96,7 +90,7 @@ class LoanOriginationWorkflow:
                     start_to_close_timeout=timedelta(seconds=30),  # pricing + notify + e-sign
                 )
                 next_state = State(outcome)  # OFFER_GENERATED
-            elif current in _PARK_STATES:
+            elif current in AWAITING_RESOLUTION:
                 # Human-in-the-loop (#15): park durably until a reviewer resolves.
                 await workflow.wait_condition(lambda: self._resolution is not None)
                 resolution = self._resolution

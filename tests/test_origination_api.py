@@ -194,3 +194,92 @@ def test_unknown_application_is_404():
     assert client.get("/applications/nope/audit").status_code == 404
     assert client.post("/applications/nope/consent", json={"purpose": "x"}).status_code == 404
     assert client.post("/applications/nope/start").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Resolve / override (#15, 15b)
+# ---------------------------------------------------------------------------
+
+def _uw_stack():
+    """A stack authed as an underwriter, with a fake resolve-signal capturing calls."""
+    from lending.workflow.statemachine import State  # noqa
+    engine = make_engine()
+    repo = ApplicationRepository(engine)
+    audit = AuditStore(engine)
+    auth = AuthService(engine, "test-secret")
+    _uw, utoken = auth.register("uw@example.com", "pw", "UW", "underwriter")
+    _appl, atoken = auth.register("a@example.com", "pw", "A", "applicant")
+    signals: list = []
+    app = create_app(repo, audit=audit, auth_service=auth,
+                     workflow_starter=lambda i: f"run-{i}",
+                     resolve_signal=lambda i, res: signals.append((i, res)))
+    client = TestClient(app, headers={"Authorization": f"Bearer {utoken}"})
+    return client, repo, audit, signals, atoken
+
+
+def _seed_parked(repo, state, *, reason_codes=("HIGH_DTI",)):
+    from lending.los.schema import Decision, Disposition
+    app = Application(applicant=Applicant(full_name="Priya Sharma"))
+    app.workflow_state = state
+    if state == "REFERRED":
+        app.decision = Decision(disposition=Disposition.REFER, source="engine",
+                                reason_codes=list(reason_codes), band="B", score=70,
+                                rules_version="v1", scorecard_version="v1")
+    repo.save(app)
+    return app.application_id
+
+
+def test_resolve_referred_to_approved_overrides_decision_and_signals():
+    client, repo, _, signals, _ = _uw_stack()
+    app_id = _seed_parked(repo, "REFERRED")
+    r = client.post(f"/applications/{app_id}/resolve",
+                    json={"to_state": "APPROVED", "reason_code": "MANUAL_APPROVE"})
+    assert r.status_code == 200, r.text
+    # decision-of-record overridden to the human's call, sourced to the underwriter
+    dec = repo.get(app_id).decision
+    assert dec.disposition.value == "approve"
+    assert dec.source.startswith("underwriter:")
+    # the parked workflow was signaled with the target state
+    assert signals and signals[-1][1]["to_state"] == "APPROVED"
+
+
+def test_resolve_requires_underwriter():
+    client, repo, _, _, atoken = _uw_stack()
+    app_id = _seed_parked(repo, "REFERRED")
+    r = client.post(f"/applications/{app_id}/resolve",
+                    json={"to_state": "APPROVED", "reason_code": "MANUAL_APPROVE"},
+                    headers={"Authorization": f"Bearer {atoken}"})
+    assert r.status_code == 403
+
+
+def test_resolve_rejects_unknown_reason_code():
+    client, repo, *_ = _uw_stack()
+    app_id = _seed_parked(repo, "REFERRED")
+    r = client.post(f"/applications/{app_id}/resolve",
+                    json={"to_state": "APPROVED", "reason_code": "BECAUSE_I_SAID_SO"})
+    assert r.status_code == 422
+
+
+def test_resolve_rejects_illegal_transition():
+    client, repo, *_ = _uw_stack()
+    app_id = _seed_parked(repo, "REFERRED")
+    r = client.post(f"/applications/{app_id}/resolve",
+                    json={"to_state": "KYC_VERIFIED", "reason_code": "MANUAL_APPROVE"})
+    assert r.status_code == 422
+
+
+def test_resolve_rejects_when_not_parked():
+    client, repo, *_ = _uw_stack()
+    app_id = _seed_parked(repo, "OFFER_GENERATED")
+    r = client.post(f"/applications/{app_id}/resolve",
+                    json={"to_state": "APPROVED", "reason_code": "MANUAL_APPROVE"})
+    assert r.status_code == 409
+
+
+def test_hard_knockout_is_non_overridable():
+    client, repo, *_ = _uw_stack()
+    # a parked case carrying a hard-knockout reason cannot be approved
+    app_id = _seed_parked(repo, "REFERRED", reason_codes=("LOW_CIBIL",))
+    r = client.post(f"/applications/{app_id}/resolve",
+                    json={"to_state": "APPROVED", "reason_code": "MANUAL_APPROVE"})
+    assert r.status_code == 403

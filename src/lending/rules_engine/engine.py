@@ -116,6 +116,11 @@ _RULE_CATALOGUE: dict[str, list[Rule]] = {
 # Public interface
 # ---------------------------------------------------------------------------
 
+def knockout_reason_codes(rules_version: str = "v1") -> frozenset[str]:
+    """The hard-knockout reason codes — non-overridable at the Ops Console (#15/§16.10)."""
+    return frozenset(r.reason_code for r in _RULE_CATALOGUE[rules_version] if r.is_knockout)
+
+
 def evaluate(
     features: ApplicantFeatures,
     rules_version: str = "v1",

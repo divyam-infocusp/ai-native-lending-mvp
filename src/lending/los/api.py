@@ -45,6 +45,11 @@ class ConsentIn(BaseModel):
     purpose: str
 
 
+class ResolveIn(BaseModel):
+    to_state: str
+    reason_code: str
+
+
 class DocumentIn(BaseModel):
     doc_type: str
     reference: Optional[str] = None
@@ -80,17 +85,31 @@ async def _default_workflow_starter(application_id: str) -> str:
     return handle.id
 
 
+async def _default_resolve_signal(application_id: str, resolution: dict) -> None:
+    """Signal the parked workflow with a reviewer's resolution (#15)."""
+    from temporalio.client import Client
+
+    from lending.settings import load_settings
+    from lending.workflow import LoanOriginationWorkflow
+
+    client = await Client.connect(load_settings().temporal_address)
+    handle = client.get_workflow_handle(f"app-{application_id}")
+    await handle.signal(LoanOriginationWorkflow.resolve, resolution)
+
+
 def create_app(
     repository: ApplicationRepository | None = None,
     *,
     audit: AuditStore | None = None,
     copilot=None,
     workflow_starter=None,
+    resolve_signal=None,
     auth_service: AuthService | None = None,
 ) -> FastAPI:
     repo = repository or ApplicationRepository(make_engine())
     audit_store = audit or AuditStore(repo._engine)
     starter = workflow_starter or _default_workflow_starter
+    resolver = resolve_signal or _default_resolve_signal
     if auth_service is None:
         from lending.settings import load_settings
 
@@ -276,5 +295,54 @@ def create_app(
             "application_id": application_id,
             "events": [e.model_dump(mode="json") for e in events],
         }
+
+    @app.post("/applications/{application_id}/resolve")
+    async def resolve_application(application_id: str, body: ResolveIn,
+                                 user: User = Depends(current_user)) -> dict:
+        """Ops Console (#15): an underwriter resolves a parked case. Validates the
+        parked state + legal target + structured reason code, enforces tiered
+        overrides (hard knockouts non-overridable), records a soft override as the
+        decision-of-record, and signals the parked workflow to resume."""
+        from lending.rules_engine import knockout_reason_codes
+        from lending.workflow.statemachine import (
+            AWAITING_RESOLUTION, RESOLVE_REASON_CODES, State, is_legal,
+        )
+
+        if user.role != "underwriter":
+            raise HTTPException(status_code=403, detail="only underwriters can resolve cases")
+        application = require_authorized(application_id, user)
+
+        current = State(application.workflow_state) if application.workflow_state else None
+        if current not in AWAITING_RESOLUTION:
+            raise HTTPException(status_code=409, detail="application is not awaiting resolution")
+        try:
+            to_state = State(body.to_state)
+        except ValueError:
+            raise HTTPException(status_code=422, detail=f"unknown state: {body.to_state!r}")
+        if not is_legal(current, to_state):
+            raise HTTPException(status_code=422, detail=f"illegal resolution {current.value} → {to_state.value}")
+        if body.reason_code not in RESOLVE_REASON_CODES:
+            raise HTTPException(status_code=422, detail=f"unknown reason code: {body.reason_code!r}")
+
+        # Tiered override: a hard knockout is non-overridable (cannot be approved).
+        if to_state == State.APPROVED and application.decision:
+            hard = knockout_reason_codes()
+            if any(rc in hard for rc in application.decision.reason_codes):
+                raise HTTPException(status_code=403, detail="hard knockout is non-overridable")
+
+        # Soft override: at REFERRED, the human decision becomes the decision-of-record.
+        if current == State.REFERRED:
+            from lending.decision import apply_override
+            from lending.los.schema import Disposition
+
+            disposition = Disposition.APPROVE if to_state == State.APPROVED else Disposition.DECLINE
+            apply_override(repo, audit_store, application_id,
+                           disposition=disposition, reviewer=user.user_id, reason_code=body.reason_code)
+
+        resolution = {"to_state": to_state.value, "reviewer": user.user_id, "reason_code": body.reason_code}
+        res = resolver(application_id, resolution)
+        if inspect.isawaitable(res):
+            await res
+        return {"application_id": application_id, "resolved_to": to_state.value, "status": "resolved"}
 
     return app

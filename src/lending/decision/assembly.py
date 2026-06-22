@@ -93,6 +93,34 @@ def record_decision(repository, audit, application_id: str, decision: Decision) 
     return decision
 
 
+def apply_override(repository, audit, application_id: str, *, disposition: Disposition,
+                   reviewer: str, reason_code: str) -> Decision:
+    """Record a reviewer's soft override as the new decision-of-record (§16.10):
+    the disposition becomes the human's, `source = underwriter:<id>`, and the
+    engine's pinned versions/score/band/explanation are preserved. The original
+    engine decision stays in the audit trail (it was recorded when first decided)."""
+    application = repository.get(application_id)
+    if application is None:
+        raise ValueError(f"unknown application: {application_id!r}")
+    engine = application.decision
+    override = Decision(
+        disposition=disposition,
+        source=f"underwriter:{reviewer}",
+        reason_codes=[reason_code],
+        rules_version=engine.rules_version if engine else None,
+        scorecard_version=engine.scorecard_version if engine else None,
+        score=engine.score if engine else None,
+        band=engine.band if engine else None,
+        version_set=engine.version_set if engine else None,
+        explanation=engine.explanation if engine else None,
+    )
+    application.decision = override
+    application.updated_at = datetime.now(timezone.utc)
+    repository.save(application)
+    audit.append(application_id, EventType.DECISION, override.model_dump(mode="json"), actor=override.source)
+    return override
+
+
 def reconstruct_decision(audit, application_id: str) -> Decision | None:
     """Rebuild the issued decision-of-record from the audit trail (the latest
     DECISION event). Returns None if no decision was ever recorded."""
