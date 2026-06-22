@@ -43,10 +43,16 @@ LEGAL_TRANSITIONS: dict[State, frozenset[State]] = {
     State.LEAD_QUALIFIED: frozenset({State.APPLICATION_SUBMITTED}),
     State.APPLICATION_SUBMITTED: frozenset({State.KYC_IN_PROGRESS}),
     State.KYC_IN_PROGRESS: frozenset({State.KYC_VERIFIED, State.KYC_EXCEPTION}),
-    State.KYC_EXCEPTION: frozenset({State.KYC_VERIFIED}),
+    # A KYC exception is resolved by re-verifying (→ KYC_VERIFIED) or, when the
+    # documents are genuinely fraudulent/unverifiable, by a human reject (→ DECLINED).
+    State.KYC_EXCEPTION: frozenset({State.KYC_VERIFIED, State.DECLINED}),
     State.KYC_VERIFIED: frozenset({State.UNDERWRITING}),
     State.UNDERWRITING: frozenset({State.DECISION_READY, State.UW_EXCEPTION}),
-    State.UW_EXCEPTION: frozenset({State.DECISION_READY}),
+    # A UW exception is resolved by *re-assessing* (re-run underwriting) once the
+    # reviewer supplements the gap, or — when it can't be underwritten at all — by
+    # a human reject (→ DECLINED). It never skips straight to a decision, because
+    # the exception meant the engine inputs were never assembled.
+    State.UW_EXCEPTION: frozenset({State.UNDERWRITING, State.DECLINED}),
     State.DECISION_READY: frozenset({State.APPROVED, State.DECLINED, State.REFERRED}),
     State.REFERRED: frozenset({State.APPROVED, State.DECLINED}),
     State.APPROVED: frozenset({State.OFFER_GENERATED}),
@@ -83,7 +89,9 @@ AWAITING_RESOLUTION: frozenset[State] = frozenset({
 # case (no free text, §16.10).
 RESOLVE_REASON_CODES: frozenset[str] = frozenset({
     "DOC_REVERIFIED",       # KYC exception — documents re-verified
-    "DATA_SUPPLEMENTED",    # UW exception — missing data supplied
+    "DOC_NOT_GENUINE",      # KYC exception — documents fraudulent/unverifiable, reject
+    "DATA_SUPPLEMENTED",    # UW exception — missing data supplied, re-assess
+    "CANNOT_UNDERWRITE",    # UW exception — cannot be underwritten, reject
     "ELIGIBLE_ON_REVIEW",   # lead exception — genuine, proceed
     "NOT_GENUINE",          # lead exception — spam/not a loan, reject
     "MANUAL_APPROVE",       # referred — underwriter approves

@@ -28,7 +28,7 @@ from lending.adapters import pull_bureau
 from lending.audit import AuditStore, EventType
 from lending.consent import ConsentError, enforce_consent
 from lending.governance import active_version_set
-from lending.rules_engine import ApplicantFeatures, evaluate
+from lending.rules_engine import ApplicantFeatures, dti_ratio, evaluate
 from lending.scorecard import score
 
 # The consent purpose underwriting authorizes before the hard inquiry.
@@ -109,8 +109,9 @@ def _build_summary(features: ApplicantFeatures, report) -> dict:
     vs = active_version_set()
     rules_result = evaluate(features, vs.rules)
     score_result = score(features, vs.scorecard)
-    dti = (features.monthly_obligations / features.monthly_income
-           if features.monthly_income else None)
+    # Post-loan DTI — the same definition the HIGH_DTI rule judges (incl. the
+    # prospective EMI), so the surfaced number agrees with the decision.
+    dti = dti_ratio(features) if features.monthly_income else None
     return {
         "dti": round(dti, 4) if dti is not None else None,
         "bureau_score": report.score,

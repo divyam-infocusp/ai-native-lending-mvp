@@ -116,6 +116,12 @@ def make_reflective_ocr_extractor(repository):
             "form16": {"name": _rec(name), "pan": _rec(pan), "employer_name": _rec(employer),
                        "gross_monthly_income": _rec(gross)},
         }
+
+        # Demo: a doc-mismatch scenario reads a *different* name off Form-16 so the
+        # cross-source check on `name` (a KYC key field) fails → KYC_EXCEPTION.
+        if feats.get("demo_scenario") == "doc_mismatch" and "form16" in per_doc:
+            per_doc["form16"]["name"] = _rec("Anjali Verma")
+
         return per_doc.get(doc_type, {})
 
     return extract

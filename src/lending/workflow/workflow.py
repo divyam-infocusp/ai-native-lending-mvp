@@ -101,7 +101,8 @@ class LoanOriginationWorkflow:
                 await workflow.execute_activity(
                     OriginationActivities.record_resolution,
                     args=[application_id, current.value, to_state.value,
-                          resolution.get("reviewer", "unknown"), resolution.get("reason_code")],
+                          resolution.get("reviewer", "unknown"), resolution.get("reason_code"),
+                          resolution.get("note")],
                     start_to_close_timeout=timedelta(seconds=10),
                 )
                 next_state = to_state

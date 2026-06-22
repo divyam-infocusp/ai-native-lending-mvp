@@ -48,6 +48,7 @@ class ConsentIn(BaseModel):
 class ResolveIn(BaseModel):
     to_state: str
     reason_code: str
+    note: Optional[str] = None      # required human justification (validated below)
 
 
 class DocumentIn(BaseModel):
@@ -154,6 +155,17 @@ def create_app(
     def health() -> dict:
         return {"status": "ok"}
 
+    @app.get("/policy")
+    def read_policy(version: str = "v1", user: User = Depends(current_user)) -> dict:
+        """The active lending policy in human-readable form (#16.9) — eligibility
+        rules + risk bands + pricing + document thresholds, for the Ops Console."""
+        from lending.policy_view import build_policy_view
+
+        try:
+            return build_policy_view(version)
+        except ValueError as err:
+            raise HTTPException(status_code=404, detail=str(err))
+
     @app.post("/auth/register")
     def register(body: RegisterIn) -> dict:
         try:
@@ -181,6 +193,21 @@ def create_app(
         payload: ApplicationCreate,
         user: User = Depends(current_user),
     ) -> Application:
+        # Applications are authored by applicants only (#38). Underwriters review;
+        # they must never become an application's owner — otherwise the app is
+        # invisible to every applicant's owner-scoped list. Enforced here (not just
+        # in the client route guard) so a crossed/stale token can't create an
+        # orphaned, underwriter-owned application.
+        if user.role != "applicant":
+            raise HTTPException(status_code=403, detail="only applicants can create applications")
+        # Demo scenario tag (optional) — validate it so a typo can't silently mean
+        # "clean". Real intake ignores this field.
+        scenario = (payload.features or {}).get("demo_scenario")
+        if scenario is not None:
+            from lending.adapters.demo_scenarios import DEMO_SCENARIOS
+
+            if scenario not in DEMO_SCENARIOS:
+                raise HTTPException(status_code=422, detail=f"unknown demo_scenario: {scenario!r}")
         application = Application(
             applicant=payload.applicant,
             features=payload.features,
@@ -281,7 +308,18 @@ def create_app(
 
     @app.post("/applications/{application_id}/start", status_code=202)
     async def start_application(application_id: str, user: User = Depends(current_user)) -> dict:
-        require_authorized(application_id, user)
+        application = require_authorized(application_id, user)
+        # Gate entry to the workflow on completeness: an incomplete application
+        # would only surface as a data-gap UW_EXCEPTION downstream (with no way to
+        # supplement). Stop it here with the specific list of what's still missing.
+        from lending.agents.onboarding import missing_fields
+
+        remaining = missing_fields(application)
+        if remaining:
+            raise HTTPException(
+                status_code=422,
+                detail=f"application is incomplete — still needs: {', '.join(remaining)}",
+            )
         run_ref = starter(application_id)
         if inspect.isawaitable(run_ref):
             run_ref = await run_ref
@@ -323,6 +361,12 @@ def create_app(
             raise HTTPException(status_code=422, detail=f"illegal resolution {current.value} → {to_state.value}")
         if body.reason_code not in RESOLVE_REASON_CODES:
             raise HTTPException(status_code=422, detail=f"unknown reason code: {body.reason_code!r}")
+        # A human justification is mandatory (§16.10): the *binding* reason stays the
+        # structured reason_code; this free-text note is the reviewer's rationale,
+        # recorded in the audit trail for compliance.
+        note = (body.note or "").strip()
+        if not note:
+            raise HTTPException(status_code=422, detail="a justification note is required")
 
         # Tiered override: a hard knockout is non-overridable (cannot be approved).
         if to_state == State.APPROVED and application.decision:
@@ -330,8 +374,11 @@ def create_app(
             if any(rc in hard for rc in application.decision.reason_codes):
                 raise HTTPException(status_code=403, detail="hard knockout is non-overridable")
 
-        # Soft override: at REFERRED, the human decision becomes the decision-of-record.
-        if current == State.REFERRED:
+        # When the resolution IS the decision (approve/decline), record it as the
+        # human decision-of-record (§16.10): a REFERRED override, or a reject out of
+        # a KYC/UW exception (documents not genuine / cannot underwrite). For an
+        # exception there is no prior engine decision — apply_override handles that.
+        if to_state in (State.APPROVED, State.DECLINED):
             from lending.decision import apply_override
             from lending.los.schema import Disposition
 
@@ -339,10 +386,20 @@ def create_app(
             apply_override(repo, audit_store, application_id,
                            disposition=disposition, reviewer=user.user_id, reason_code=body.reason_code)
 
-        resolution = {"to_state": to_state.value, "reviewer": user.user_id, "reason_code": body.reason_code}
-        res = resolver(application_id, resolution)
-        if inspect.isawaitable(res):
-            await res
+        resolution = {"to_state": to_state.value, "reviewer": user.user_id,
+                      "reason_code": body.reason_code, "note": note}
+        try:
+            res = resolver(application_id, resolution)
+            if inspect.isawaitable(res):
+                await res
+        except Exception as err:  # noqa: BLE001 — surface a clean error, not a 500
+            # The parked workflow could not be signalled — most often because it is
+            # no longer running (e.g. an application that predates human-in-the-loop
+            # parking, whose run already completed). Report it instead of a 500.
+            raise HTTPException(
+                status_code=409,
+                detail=f"could not resume the workflow — it may no longer be running ({err})",
+            )
         return {"application_id": application_id, "resolved_to": to_state.value, "status": "resolved"}
 
     return app

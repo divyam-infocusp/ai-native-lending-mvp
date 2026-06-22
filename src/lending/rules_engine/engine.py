@@ -28,7 +28,10 @@ class Rule:
     # check returns (passed, actual_value, threshold_value)
 
 
-def _dti(f: ApplicantFeatures) -> float:
+def dti_ratio(f: ApplicantFeatures) -> float:
+    """Post-loan debt-to-income: existing obligations + the prospective EMI, over
+    income. This is the DTI the HIGH_DTI rule judges and the scorecard bins, so the
+    underwriting summary surfaces the *same* number (not obligations-only)."""
     emi = (f.loan_amount_requested / f.loan_tenure_months) if f.loan_tenure_months > 0 else 0
     return (f.monthly_obligations + emi) / f.monthly_income if f.monthly_income > 0 else float("inf")
 
@@ -90,7 +93,7 @@ _RULES_V1: list[Rule] = [
         rule_id="R08_MAX_DTI",
         reason_code="HIGH_DTI",
         is_knockout=False,
-        check=lambda f, p: (_dti(f) <= p["max_dti"], round(_dti(f), 4), p["max_dti"]),
+        check=lambda f, p: (dti_ratio(f) <= p["max_dti"], round(dti_ratio(f), 4), p["max_dti"]),
     ),
     Rule(
         rule_id="R09_MAX_LOAN",

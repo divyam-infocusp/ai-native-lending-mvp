@@ -34,16 +34,17 @@ def build_doc_extractor(adapter_mode: str, repository):
     return make_reflective_ocr_extractor(repository)
 
 
-def build_bureau_harness(adapter_mode: str):
+def build_bureau_harness(adapter_mode: str, repository):
     """Credit-bureau adapter harness (#10) for the Underwriting Agent (#20).
 
-    `mock` → a mock bureau harness; `live` → the real bureau adapter (not built
-    yet — the real-ready integration lands with the provider wiring)."""
+    `mock` → a scenario-aware mock that returns a report based on the application's
+    `demo_scenario` tag (so every path is triggerable from the UI); `live` → the
+    real bureau adapter (not built yet — lands with the provider wiring)."""
     if adapter_mode == "live":
         raise NotImplementedError("live bureau adapter not wired yet; use ADAPTER_MODE=mock")
-    from lending.adapters import make_mock_bureau_harness
+    from lending.adapters.demo_scenarios import ScenarioBureauHarness
 
-    return make_mock_bureau_harness()
+    return ScenarioBureauHarness(repository)
 
 
 def build_delivery_harnesses(adapter_mode: str):
@@ -65,7 +66,7 @@ def build_activities(database_url: str, adapter_mode: str = "mock") -> Originati
         repo,
         AuditStore(engine),
         doc_extract=build_doc_extractor(adapter_mode, repo),
-        bureau_harness=build_bureau_harness(adapter_mode),
+        bureau_harness=build_bureau_harness(adapter_mode, repo),
         notify_harness=notify_harness,
         esign_harness=esign_harness,
     )

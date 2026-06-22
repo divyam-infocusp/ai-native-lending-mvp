@@ -67,6 +67,9 @@ def test_decider_stops_at_offer_generated_and_terminals():
 @pytest.mark.parametrize("frm,to", [
     (State.KYC_IN_PROGRESS, State.KYC_EXCEPTION),
     (State.KYC_EXCEPTION, State.KYC_VERIFIED),
+    (State.KYC_EXCEPTION, State.DECLINED),                 # human reject (not genuine)
+    (State.UW_EXCEPTION, State.UNDERWRITING),              # resolve = re-assess
+    (State.UW_EXCEPTION, State.DECLINED),                  # human reject (cannot underwrite)
     (State.DECISION_READY, State.DECLINED),
     (State.REFERRED, State.APPROVED),
     (State.OFFER_GENERATED, State.OFFER_EXPIRED),
@@ -78,6 +81,7 @@ def test_other_legal_edges(frm, to):
 @pytest.mark.parametrize("frm,to", [
     (State.APPLICATION_SUBMITTED, State.OFFER_GENERATED),  # skip the middle
     (State.LEAD, State.UNDERWRITING),
+    (State.UW_EXCEPTION, State.DECISION_READY),            # must re-assess, not skip
     (State.APPROVED, State.DECLINED),
     (State.DECLINED, State.APPROVED),                      # terminal, no exit
     (State.KYC_VERIFIED, State.KYC_IN_PROGRESS),           # no going back
@@ -349,21 +353,59 @@ async def test_low_confidence_kyc_parks_then_resumes_to_offer():
     assert ha and ha[-1].payload["from"] == "KYC_EXCEPTION" and ha[-1].payload["to"] == "KYC_VERIFIED"
 
 
-async def test_thin_file_parks_then_resumes_to_decision():
+class _FlakyBureau:
+    """Thin on the first pull (→ UW_EXCEPTION), healthy on the re-pull — so resolving
+    the exception back to UNDERWRITING re-assembles the inputs and proceeds."""
+    def __init__(self):
+        self.calls = 0
+
+    def call(self, _request):
+        from types import SimpleNamespace
+        self.calls += 1
+        data = ({"score": None, "has_record": False, "total_monthly_obligations": 0.0,
+                 "tradelines": [], "report_id": "THIN"} if self.calls == 1 else CLEAN_REPORT)
+        return SimpleNamespace(data=data)
+
+
+async def test_kyc_exception_rejected_declines():
     engine = make_engine()
     repo = ApplicationRepository(engine)
     audit = AuditStore(engine)
     app_id = _seed_application(repo)
-    thin = {"score": None, "has_record": False, "total_monthly_obligations": 0.0,
-            "tradelines": [], "report_id": "THIN"}
-    resolution = {"to_state": "DECISION_READY", "reviewer": "u1", "reason_code": "MANUAL_REVIEW_OK"}
+    # KYC_EXCEPTION (unreadable docs) → reviewer rejects as not genuine → DECLINED.
+    resolution = {"to_state": "DECLINED", "reviewer": "u1",
+                  "reason_code": "DOC_NOT_GENUINE", "note": "Forged payslip."}
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
         result = await _run_with_resolution(env, repo, audit, app_id, resolution,
-                                            bureau_harness=_bureau(thin))
+                                            doc_extract=_doc_extract_lowconf)
 
-    # Resolving UW_EXCEPTION → DECISION_READY resumes the decision → offer.
+    assert result == State.DECLINED.value
+    ha = [e for e in audit.reconstruct(app_id) if e.event_type == "human_action"]
+    assert ha and ha[-1].payload["from"] == "KYC_EXCEPTION" and ha[-1].payload["to"] == "DECLINED"
+
+
+async def test_uw_exception_resolution_reruns_underwriting():
+    engine = make_engine()
+    repo = ApplicationRepository(engine)
+    audit = AuditStore(engine)
+    app_id = _seed_application(repo)
+    # First underwriting pass exceptions (thin file); the reviewer re-runs the
+    # assessment, the re-pull is healthy, and it proceeds to a decision → offer.
+    resolution = {"to_state": "UNDERWRITING", "reviewer": "u1",
+                  "reason_code": "DATA_SUPPLEMENTED", "note": "Re-pulled bureau."}
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        result = await _run_with_resolution(env, repo, audit, app_id, resolution,
+                                            bureau_harness=_FlakyBureau())
+
+    # Re-assessment ran (not a straight skip to the decision) and reached an offer.
     assert result == State.OFFER_GENERATED.value
+    trail = audit.reconstruct(app_id)
+    uw = [e for e in trail if e.payload.get("agent") == "underwriting"]
+    assert len(uw) == 2                       # assessed, then re-assessed
+    ha = [e for e in trail if e.event_type == "human_action"]
+    assert ha and ha[-1].payload["from"] == "UW_EXCEPTION" and ha[-1].payload["to"] == "UNDERWRITING"
 
 
 async def test_each_transition_emits_exactly_one_audit_event():

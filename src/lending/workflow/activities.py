@@ -108,6 +108,19 @@ class OriginationActivities:
     async def lead_qualify(self, application_id: str) -> str:
         """Run the Lead Qualification Agent (#21) and return the §4 outcome state
         (LEAD_QUALIFIED / LEAD_DECLINED / LEAD_EXCEPTION)."""
+        # Demo: force a manual-review escalation deterministically (skip the LLM),
+        # so the LEAD_EXCEPTION path can be triggered from the UI on demand.
+        app = self._repo.get(application_id)
+        if app and (app.features or {}).get("demo_scenario") == "lead_review":
+            self._audit.append(
+                application_id, EventType.AGENT_REASONING,
+                {"agent": "lead-qualification", "status": "manual_review",
+                 "reason_code": "DEMO_FORCED_REVIEW",
+                 "reasoning": "Demo scenario forced a manual lead review."},
+                actor="agent:lead-qualification",
+            )
+            return State.LEAD_EXCEPTION.value
+
         # Lazy import: keeps LangGraph out of the Temporal workflow sandbox's import
         # graph (activities run outside the sandbox, so importing here is safe).
         from lending.agents import qualify_lead
@@ -145,14 +158,16 @@ class OriginationActivities:
     @activity.defn
     async def record_resolution(
         self, application_id: str, from_state: str, to_state: str,
-        reviewer: str, reason_code: str | None,
+        reviewer: str, reason_code: str | None, note: str | None = None,
     ) -> None:
         """Audit a reviewer's resolution of a parked case (#15) as a HUMAN_ACTION
-        with the reviewer's identity. The state change itself is audited by advance()."""
+        with the reviewer's identity, the structured reason code, and the free-text
+        justification note. The state change itself is audited by advance()."""
         self._audit.append(
             application_id,
             EventType.HUMAN_ACTION,
-            {"action": "resolve", "from": from_state, "to": to_state, "reason_code": reason_code},
+            {"action": "resolve", "from": from_state, "to": to_state,
+             "reason_code": reason_code, "note": note},
             actor=f"underwriter:{reviewer}",
         )
 
