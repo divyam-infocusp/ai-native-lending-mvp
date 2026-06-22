@@ -11,7 +11,11 @@ import pytest
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, Worker
 
-from lending.adapters import make_mock_bureau_harness
+from lending.adapters import (
+    make_mock_bureau_harness,
+    make_mock_esign_harness,
+    make_mock_notifications_harness,
+)
 from lending.adapters.bureau import CLEAN_REPORT, HARD_INQUIRY
 from lending.agents import BUREAU_PULL_PURPOSE
 from lending.audit import AuditStore
@@ -173,19 +177,35 @@ def _bureau(report: dict | None = None):
     return make_mock_bureau_harness({HARD_INQUIRY: report or CLEAN_REPORT})
 
 
-async def _run_workflow(env, repo, audit, app_id, lead_reason=None, doc_extract=None, bureau_harness=None) -> str:
-    activities = OriginationActivities(
+def _delivery_harnesses():
+    notify, _ = make_mock_notifications_harness()
+    esign, _ = make_mock_esign_harness()
+    return notify, esign
+
+
+def _activities(repo, audit, lead_reason=None, doc_extract=None, bureau_harness=None):
+    notify, esign = _delivery_harnesses()
+    return OriginationActivities(
         repo, audit,
         lead_reason=lead_reason or _lead_reason(_IN_SEGMENT),
         doc_extract=doc_extract or _doc_extract,
         bureau_harness=bureau_harness or _bureau(),
+        notify_harness=notify,
+        esign_harness=esign,
     )
+
+
+_ALL_ACTIVITIES = (lambda a: [a.advance, a.decide, a.lead_qualify, a.verify_kyc,
+                              a.underwrite, a.deliver_offer])
+
+
+async def _run_workflow(env, repo, audit, app_id, lead_reason=None, doc_extract=None, bureau_harness=None) -> str:
+    activities = _activities(repo, audit, lead_reason, doc_extract, bureau_harness)
     async with Worker(
         env.client,
         task_queue=TASK_QUEUE,
         workflows=[LoanOriginationWorkflow],
-        activities=[activities.advance, activities.decide, activities.lead_qualify,
-                    activities.verify_kyc, activities.underwrite],
+        activities=_ALL_ACTIVITIES(activities),
     ):
         return await env.client.execute_workflow(
             LoanOriginationWorkflow.run,
@@ -215,6 +235,12 @@ async def test_clean_applicant_reaches_offer_generated():
     assert app.decision is not None
     assert app.decision.disposition.value == "approve"
     assert app.decision.source == "engine"
+    # Decision QA + offer delivery (#23) produced a real offer letter with all terms.
+    letter = app.features["offer_letter"]
+    assert letter["sanctioned_amount"] > 0
+    assert letter["emi"] > 0 and letter["tenure_months"] > 0
+    assert letter["total_amount_payable"] > letter["sanctioned_amount"]
+    assert letter["valid_until"]
 
 
 async def test_knockout_applicant_is_declined():
@@ -341,18 +367,14 @@ async def test_workflow_replay_is_deterministic():
     repo = ApplicationRepository(engine)
     audit = AuditStore(engine)
     app_id = _seed_application(repo)
-    activities = OriginationActivities(
-        repo, audit, lead_reason=_lead_reason(_IN_SEGMENT),
-        doc_extract=_doc_extract, bureau_harness=_bureau(),
-    )
+    activities = _activities(repo, audit)
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with Worker(
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[LoanOriginationWorkflow],
-            activities=[activities.advance, activities.decide, activities.lead_qualify,
-                        activities.verify_kyc, activities.underwrite],
+            activities=_ALL_ACTIVITIES(activities),
         ):
             handle = await env.client.start_workflow(
                 LoanOriginationWorkflow.run,

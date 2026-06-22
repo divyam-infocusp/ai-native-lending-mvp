@@ -85,6 +85,8 @@ class OriginationActivities:
         lead_reason=None,
         doc_extract=None,
         bureau_harness=None,
+        notify_harness=None,
+        esign_harness=None,
     ) -> None:
         self._repo = repository
         self._audit = audit
@@ -98,6 +100,9 @@ class OriginationActivities:
         # Injected bureau adapter harness (#10) for the Underwriting Agent;
         # the worker wires a mock/real harness, tests inject a scenario one.
         self._bureau_harness = bureau_harness
+        # Injected notification + e-sign harnesses (#11) for offer delivery (#23).
+        self._notify_harness = notify_harness
+        self._esign_harness = esign_harness
 
     @activity.defn
     async def lead_qualify(self, application_id: str) -> str:
@@ -174,4 +179,35 @@ class OriginationActivities:
         features = ApplicantFeatures(**{f: feats[f] for f in _FEATURE_FIELDS})
         decision = decide(features)
         record_decision(self._repo, self._audit, application_id, decision)
+
+        # Decision QA (#23): assert every decision is well-formed and that any
+        # non-approve carries adverse-action reasons. A malformed decision is a
+        # bug, not a routing case → fail loudly.
+        from lending.agents import qa_check_decision
+
+        qa = qa_check_decision(decision)
+        self._audit.append(
+            application_id, EventType.AGENT_REASONING,
+            {"agent": "decision-qa", "qa_ok": qa.ok, "issues": qa.issues,
+             "disposition": decision.disposition.value},
+            actor="agent:decision-qa",
+        )
+        if not qa.ok:
+            raise ValueError(f"decision failed QA for {application_id!r}: {qa.issues}")
         return _DISPOSITION_TO_STATE[decision.disposition].value
+
+    @activity.defn
+    async def deliver_offer(self, application_id: str) -> str:
+        """Offer delivery (#23): price + assemble the offer letter, notify, route to
+        e-sign. Used at APPROVED → OFFER_GENERATED."""
+        from lending.agents import deliver_offer
+
+        if self._notify_harness is None or self._esign_harness is None:
+            raise ValueError("no notification/e-sign harness wired (#11)")
+        result = deliver_offer(
+            self._repo, self._audit, application_id,
+            notify_harness=self._notify_harness, esign_harness=self._esign_harness,
+        )
+        if result.status != "delivered":
+            raise ValueError(f"offer delivery blocked for {application_id!r}: {result.issues}")
+        return State.OFFER_GENERATED.value

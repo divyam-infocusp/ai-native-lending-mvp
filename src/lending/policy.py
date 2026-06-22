@@ -93,6 +93,11 @@ PRICING_POLICY: dict[str, dict] = {
         "tenure_min_months": 12,
         "tenure_max_months": 60,
         "affordability_dti": 0.50,
+        # Offer-letter terms (Decision QA + offer delivery, #23). Real Indian
+        # personal-loan sanction-letter components; credit-policy values (§16.9).
+        "processing_fee_pct": 0.02,     # 2% of sanctioned amount
+        "gst_pct": 0.18,                # GST on the processing fee
+        "offer_validity_days": 30,      # sanction letter validity window
     },
 }
 

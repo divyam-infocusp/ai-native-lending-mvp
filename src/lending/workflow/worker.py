@@ -47,13 +47,27 @@ def build_bureau_harness(adapter_mode: str):
     return make_mock_bureau_harness()
 
 
+def build_delivery_harnesses(adapter_mode: str):
+    """Notification + e-sign harnesses (#11) for offer delivery (#23)."""
+    if adapter_mode == "live":
+        raise NotImplementedError("live notification/e-sign adapters not wired yet; use ADAPTER_MODE=mock")
+    from lending.adapters import make_mock_esign_harness, make_mock_notifications_harness
+
+    notify_harness, _ = make_mock_notifications_harness()
+    esign_harness, _ = make_mock_esign_harness()
+    return notify_harness, esign_harness
+
+
 def build_activities(database_url: str, adapter_mode: str = "mock") -> OriginationActivities:
     engine = make_engine(database_url)
+    notify_harness, esign_harness = build_delivery_harnesses(adapter_mode)
     return OriginationActivities(
         ApplicationRepository(engine),
         AuditStore(engine),
         doc_extract=build_doc_extractor(adapter_mode),
         bureau_harness=build_bureau_harness(adapter_mode),
+        notify_harness=notify_harness,
+        esign_harness=esign_harness,
     )
 
 
@@ -84,6 +98,7 @@ async def main() -> None:
             activities.lead_qualify,
             activities.verify_kyc,
             activities.underwrite,
+            activities.deliver_offer,
         ],
     )
     await worker.run()

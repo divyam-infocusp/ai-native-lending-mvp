@@ -13,6 +13,13 @@ from .lead_qualification import (
     build_lead_qualification_agent,
     qualify_lead,
 )
+from .decision_qa import (
+    DeliveryResult,
+    QAResult,
+    assemble_offer_letter,
+    deliver_offer,
+    qa_check_decision,
+)
 from .llm import gemini_reason, model_lite, model_pro
 from .underwriting import (
     BUREAU_PULL_PURPOSE,
@@ -52,4 +59,9 @@ __all__ = [
     "UnderwritingResult",
     "assemble_features",
     "underwrite",
+    "QAResult",
+    "DeliveryResult",
+    "qa_check_decision",
+    "assemble_offer_letter",
+    "deliver_offer",
 ]

@@ -77,6 +77,14 @@ class LoanOriginationWorkflow:
                     start_to_close_timeout=timedelta(seconds=10),
                 )
                 next_state = State(outcome)  # APPROVED | DECLINED | REFERRED
+            elif current == State.APPROVED:
+                # Decision QA + offer delivery (#23) replaces the stubbed offer step.
+                outcome = await workflow.execute_activity(
+                    OriginationActivities.deliver_offer,
+                    args=[application_id],
+                    start_to_close_timeout=timedelta(seconds=30),  # pricing + notify + e-sign
+                )
+                next_state = State(outcome)  # OFFER_GENERATED
             else:
                 next_state = stub_next_state(current)
             if next_state is None:
