@@ -53,6 +53,14 @@ class LoanOriginationWorkflow:
                     start_to_close_timeout=timedelta(seconds=30),  # LLM call
                 )
                 next_state = State(outcome)  # LEAD_QUALIFIED | LEAD_DECLINED | LEAD_EXCEPTION
+            elif current == State.KYC_IN_PROGRESS:
+                # Document Intelligence Agent (#19) replaces the stubbed KYC verify.
+                outcome = await workflow.execute_activity(
+                    OriginationActivities.verify_kyc,
+                    args=[application_id],
+                    start_to_close_timeout=timedelta(seconds=60),  # OCR + scoring
+                )
+                next_state = State(outcome)  # KYC_VERIFIED | KYC_EXCEPTION
             elif current == State.DECISION_READY:
                 # Real decision engine (#18) replaces the stubbed approve.
                 outcome = await workflow.execute_activity(

@@ -1,3 +1,11 @@
+from .document_intelligence import (
+    DocIntelResult,
+    build_cross_checks,
+    evaluate,
+    make_ocr_extractor,
+    score_profile,
+    verify_documents,
+)
 from .lead_qualification import (
     LeadQualification,
     QualificationResult,
@@ -28,4 +36,10 @@ __all__ = [
     "OnboardingTurn",
     "missing_fields",
     "register_document",
+    "DocIntelResult",
+    "verify_documents",
+    "evaluate",
+    "score_profile",
+    "build_cross_checks",
+    "make_ocr_extractor",
 ]

@@ -108,5 +108,14 @@ CONFIDENCE_POLICY: dict[str, dict] = {
         "payslip_arithmetic_tolerance": 1.0,   # INR rounding slack on sums
         "payslip_min_gross": 5_000,            # implausibly low monthly gross
         "payslip_max_gross": 10_000_000,       # implausibly high monthly gross
+        # cross-source field comparison (Document Intelligence, #19)
+        "income_match_tolerance_pct": 0.10,    # money fields agree within 10% (bonuses/arrears)
+        "name_match_min_ratio": 0.6,           # ≥60% of the shorter name's tokens must match
+        # KYC key fields: must each be reliable (and agree across sources) or the
+        # application routes to KYC_EXCEPTION. A credit/compliance policy judgment
+        # (§16.9), versioned here rather than hardcoded in the agent.
+        "kyc_key_fields": (
+            "name", "date_of_birth", "pan", "aadhaar", "gross_monthly_income",
+        ),
     },
 }

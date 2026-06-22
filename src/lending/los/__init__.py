@@ -10,6 +10,7 @@ from .schema import (
     Decision,
     FieldConfidence,
     Kyc,
+    KycStatus,
 )
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "Decision",
     "FieldConfidence",
     "Kyc",
+    "KycStatus",
     "create_app",
 ]
 

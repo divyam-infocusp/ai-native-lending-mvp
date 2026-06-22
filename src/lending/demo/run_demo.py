@@ -12,6 +12,8 @@ import asyncio
 
 from temporalio.client import Client
 
+from lending.agents import register_document
+from lending.agents.onboarding import REQUIRED_DOCUMENTS
 from lending.audit import AuditStore
 from lending.los import Applicant, Application, ApplicationRepository, make_engine
 from lending.settings import load_settings, require_pilot
@@ -38,6 +40,10 @@ OUT_OF_SCOPE_FEATURES = {
 async def _run_one(client, repo, audit, label, features) -> None:
     app = Application(applicant=Applicant(full_name=f"{label} demo"), features=features)
     repo.save(app)
+    # Register the uploaded documents so KYC / Document Intelligence (#19) has
+    # something to verify (the mock OCR adapter supplies the extracted fields).
+    for doc in REQUIRED_DOCUMENTS:
+        register_document(repo, app.application_id, doc, reference=f"s3://demo/{app.application_id}/{doc}.pdf")
     result = await client.execute_workflow(
         LoanOriginationWorkflow.run,
         app.application_id,

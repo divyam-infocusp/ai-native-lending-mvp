@@ -21,9 +21,27 @@ from .activities import OriginationActivities
 from .workflow import TASK_QUEUE, LoanOriginationWorkflow
 
 
-def build_activities(database_url: str) -> OriginationActivities:
+def build_doc_extractor(adapter_mode: str):
+    """Document extractor (OCR/KYC) for the Document Intelligence Agent (#19).
+
+    `mock` → a placeholder mock OCR harness so the demo runs end-to-end; `live` →
+    the real OCR/KYC adapters, which arrive in #9 (not built yet)."""
+    from lending.agents import make_ocr_extractor
+
+    if adapter_mode == "live":
+        raise NotImplementedError("live OCR/KYC adapter not built yet (#9); use ADAPTER_MODE=mock")
+    from lending.adapters.ocr_mock import make_mock_ocr_harness
+
+    return make_ocr_extractor(make_mock_ocr_harness())
+
+
+def build_activities(database_url: str, adapter_mode: str = "mock") -> OriginationActivities:
     engine = make_engine(database_url)
-    return OriginationActivities(ApplicationRepository(engine), AuditStore(engine))
+    return OriginationActivities(
+        ApplicationRepository(engine),
+        AuditStore(engine),
+        doc_extract=build_doc_extractor(adapter_mode),
+    )
 
 
 async def _connect_with_retry(address: str, attempts: int = 30, delay: float = 2.0) -> Client:
@@ -41,13 +59,18 @@ async def _connect_with_retry(address: str, attempts: int = 30, delay: float = 2
 
 async def main() -> None:
     settings = load_settings()
-    activities = build_activities(settings.database_url)
+    activities = build_activities(settings.database_url, settings.adapter_mode)
     client = await _connect_with_retry(settings.temporal_address)
     worker = Worker(
         client,
         task_queue=TASK_QUEUE,
         workflows=[LoanOriginationWorkflow],
-        activities=[activities.advance, activities.decide, activities.lead_qualify],
+        activities=[
+            activities.advance,
+            activities.decide,
+            activities.lead_qualify,
+            activities.verify_kyc,
+        ],
     )
     await worker.run()
 

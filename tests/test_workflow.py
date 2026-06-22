@@ -98,13 +98,47 @@ CLEAN_FEATURES = {
 }
 
 
+_CLEAN_DOCS = ["identity_proof", "address_proof", "salary_slips", "bank_statement", "form16"]
+
+
 def _seed_application(repo: ApplicationRepository, features: dict | None = None) -> str:
-    app = Application(
-        applicant=Applicant(full_name="Priya Sharma"),
-        features=features if features is not None else dict(CLEAN_FEATURES),
-    )
+    feats = dict(features if features is not None else CLEAN_FEATURES)
+    # KYC (#19) now runs in the spine, so the applicant must have uploaded documents.
+    feats.setdefault("documents", {d: {"uploaded": True, "verified": None} for d in _CLEAN_DOCS})
+    app = Application(applicant=Applicant(full_name="Priya Sharma"), features=feats)
     repo.save(app)
     return app.application_id
+
+
+# Fake OCR extraction for Document Intelligence (#19) — a clean, consistent doc
+# set. Gross income matches CLEAN_FEATURES so the downstream decision is unchanged.
+def _rec(value, ocr=0.97):
+    return {"value": value, "ocr_conf": ocr}
+
+
+_CLEAN_EXTRACTIONS = {
+    "identity_proof": {"name": _rec("Priya Sharma"), "date_of_birth": _rec("1994-02-11"),
+                       "aadhaar": _rec("234567890124"), "address": _rec("12 MG Road, Pune")},
+    "address_proof": {"name": _rec("Priya Sharma"), "date_of_birth": _rec("1994-02-11"),
+                      "pan": _rec("ABCDE1234F")},
+    "salary_slips": {"name": _rec("Priya Sharma"), "employer_name": _rec("Acme Corp"),
+                     "gross_monthly_income": _rec(90_000), "net_monthly_income": _rec(72_000)},
+    "bank_statement": {"name": _rec("Priya Sharma"), "net_monthly_income": _rec(72_000)},
+    "form16": {"name": _rec("Priya Sharma"), "pan": _rec("ABCDE1234F"),
+               "employer_name": _rec("Acme Corp"), "gross_monthly_income": _rec(90_000)},
+}
+
+
+def _doc_extract(application_id, doc_type):
+    return _CLEAN_EXTRACTIONS.get(doc_type, {})
+
+
+def _doc_extract_lowconf(application_id, doc_type):
+    """Same docs, but the Aadhaar is unreadable → KYC routes to exception."""
+    ext = {k: dict(v) for k, v in _CLEAN_EXTRACTIONS.get(doc_type, {}).items()}
+    if doc_type == "identity_proof":
+        ext["aadhaar"] = _rec("234567890124", ocr=0.15)
+    return ext
 
 
 # Fake lead-qualification reasoning steps (no live Gemini in tests).
@@ -126,13 +160,17 @@ _UNCERTAIN = {
 }
 
 
-async def _run_workflow(env, repo, audit, app_id, lead_reason=None) -> str:
-    activities = OriginationActivities(repo, audit, lead_reason=lead_reason or _lead_reason(_IN_SEGMENT))
+async def _run_workflow(env, repo, audit, app_id, lead_reason=None, doc_extract=None) -> str:
+    activities = OriginationActivities(
+        repo, audit,
+        lead_reason=lead_reason or _lead_reason(_IN_SEGMENT),
+        doc_extract=doc_extract or _doc_extract,
+    )
     async with Worker(
         env.client,
         task_queue=TASK_QUEUE,
         workflows=[LoanOriginationWorkflow],
-        activities=[activities.advance, activities.decide, activities.lead_qualify],
+        activities=[activities.advance, activities.decide, activities.lead_qualify, activities.verify_kyc],
     ):
         return await env.client.execute_workflow(
             LoanOriginationWorkflow.run,
@@ -223,6 +261,22 @@ async def test_uncertain_lead_parks_in_exception():
     assert repo.get(app_id).decision is None
 
 
+async def test_low_confidence_kyc_parks_in_exception():
+    engine = make_engine()
+    repo = ApplicationRepository(engine)
+    audit = AuditStore(engine)
+    app_id = _seed_application(repo)
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        result = await _run_workflow(env, repo, audit, app_id, doc_extract=_doc_extract_lowconf)
+
+    # Document Intelligence (#19) routed to KYC_EXCEPTION — never reaches decision.
+    assert result == State.KYC_EXCEPTION.value
+    app = repo.get(app_id)
+    assert app.workflow_state == State.KYC_EXCEPTION.value
+    assert app.decision is None
+
+
 async def test_each_transition_emits_exactly_one_audit_event():
     engine = make_engine()
     repo = ApplicationRepository(engine)
@@ -255,14 +309,16 @@ async def test_workflow_replay_is_deterministic():
     repo = ApplicationRepository(engine)
     audit = AuditStore(engine)
     app_id = _seed_application(repo)
-    activities = OriginationActivities(repo, audit, lead_reason=_lead_reason(_IN_SEGMENT))
+    activities = OriginationActivities(
+        repo, audit, lead_reason=_lead_reason(_IN_SEGMENT), doc_extract=_doc_extract
+    )
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with Worker(
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[LoanOriginationWorkflow],
-            activities=[activities.advance, activities.decide, activities.lead_qualify],
+            activities=[activities.advance, activities.decide, activities.lead_qualify, activities.verify_kyc],
         ):
             handle = await env.client.start_workflow(
                 LoanOriginationWorkflow.run,
