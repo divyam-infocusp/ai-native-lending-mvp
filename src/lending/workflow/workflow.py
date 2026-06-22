@@ -61,6 +61,14 @@ class LoanOriginationWorkflow:
                     start_to_close_timeout=timedelta(seconds=60),  # OCR + scoring
                 )
                 next_state = State(outcome)  # KYC_VERIFIED | KYC_EXCEPTION
+            elif current == State.UNDERWRITING:
+                # Underwriting Agent (#20) replaces the stubbed underwriting step.
+                outcome = await workflow.execute_activity(
+                    OriginationActivities.underwrite,
+                    args=[application_id],
+                    start_to_close_timeout=timedelta(seconds=30),  # bureau pull + assembly
+                )
+                next_state = State(outcome)  # DECISION_READY | UW_EXCEPTION
             elif current == State.DECISION_READY:
                 # Real decision engine (#18) replaces the stubbed approve.
                 outcome = await workflow.execute_activity(

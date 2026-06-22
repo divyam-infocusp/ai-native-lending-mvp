@@ -49,6 +49,12 @@ _KYC_STATUS_TO_STATE: dict[str, State] = {
     "exception": State.KYC_EXCEPTION,
 }
 
+# Map the Underwriting Agent outcome to the §4 state.
+_UW_STATUS_TO_STATE: dict[str, State] = {
+    "completed": State.DECISION_READY,
+    "exception": State.UW_EXCEPTION,
+}
+
 # Map the fine-grained §4 state to the coarse LOS status.
 _COARSE_STATUS: dict[State, ApplicationStatus] = {
     State.LEAD: ApplicationStatus.CREATED,
@@ -78,6 +84,7 @@ class OriginationActivities:
         audit: AuditStore,
         lead_reason=None,
         doc_extract=None,
+        bureau_harness=None,
     ) -> None:
         self._repo = repository
         self._audit = audit
@@ -88,6 +95,9 @@ class OriginationActivities:
         # tests inject a fake. None → must be supplied before KYC runs (no real
         # OCR adapter exists until #9).
         self._doc_extract = doc_extract
+        # Injected bureau adapter harness (#10) for the Underwriting Agent;
+        # the worker wires a mock/real harness, tests inject a scenario one.
+        self._bureau_harness = bureau_harness
 
     @activity.defn
     async def lead_qualify(self, application_id: str) -> str:
@@ -114,6 +124,18 @@ class OriginationActivities:
             self._repo, self._audit, application_id, extract=self._doc_extract
         )
         return _KYC_STATUS_TO_STATE[result.status].value
+
+    @activity.defn
+    async def underwrite(self, application_id: str) -> str:
+        """Run the Underwriting Agent (#20): consent gate → bureau pull → assemble
+        features → read-only engine preview. Returns the §4 outcome state
+        (DECISION_READY / UW_EXCEPTION)."""
+        from lending.agents import underwrite
+
+        if self._bureau_harness is None:
+            raise ValueError("no bureau harness wired (#10 / inject bureau_harness)")
+        result = underwrite(self._repo, self._audit, application_id, bureau_harness=self._bureau_harness)
+        return _UW_STATUS_TO_STATE[result.status].value
 
     @activity.defn
     async def advance(self, application_id: str, from_state: str, to_state: str) -> str:

@@ -14,6 +14,12 @@ from .lead_qualification import (
     qualify_lead,
 )
 from .llm import gemini_reason, model_lite, model_pro
+from .underwriting import (
+    BUREAU_PULL_PURPOSE,
+    UnderwritingResult,
+    assemble_features,
+    underwrite,
+)
 from .onboarding import (
     OnboardingCopilot,
     OnboardingResponse,
@@ -42,4 +48,8 @@ __all__ = [
     "score_profile",
     "build_cross_checks",
     "make_ocr_extractor",
+    "BUREAU_PULL_PURPOSE",
+    "UnderwritingResult",
+    "assemble_features",
+    "underwrite",
 ]

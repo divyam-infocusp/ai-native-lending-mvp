@@ -35,12 +35,25 @@ def build_doc_extractor(adapter_mode: str):
     return make_ocr_extractor(make_mock_ocr_harness())
 
 
+def build_bureau_harness(adapter_mode: str):
+    """Credit-bureau adapter harness (#10) for the Underwriting Agent (#20).
+
+    `mock` → a mock bureau harness; `live` → the real bureau adapter (not built
+    yet — the real-ready integration lands with the provider wiring)."""
+    if adapter_mode == "live":
+        raise NotImplementedError("live bureau adapter not wired yet; use ADAPTER_MODE=mock")
+    from lending.adapters import make_mock_bureau_harness
+
+    return make_mock_bureau_harness()
+
+
 def build_activities(database_url: str, adapter_mode: str = "mock") -> OriginationActivities:
     engine = make_engine(database_url)
     return OriginationActivities(
         ApplicationRepository(engine),
         AuditStore(engine),
         doc_extract=build_doc_extractor(adapter_mode),
+        bureau_harness=build_bureau_harness(adapter_mode),
     )
 
 
@@ -70,6 +83,7 @@ async def main() -> None:
             activities.decide,
             activities.lead_qualify,
             activities.verify_kyc,
+            activities.underwrite,
         ],
     )
     await worker.run()

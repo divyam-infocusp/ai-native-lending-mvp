@@ -11,7 +11,11 @@ import pytest
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, Worker
 
+from lending.adapters import make_mock_bureau_harness
+from lending.adapters.bureau import CLEAN_REPORT, HARD_INQUIRY
+from lending.agents import BUREAU_PULL_PURPOSE
 from lending.audit import AuditStore
+from lending.consent import capture_authorization
 from lending.los import Applicant, Application, ApplicationRepository, make_engine
 from lending.workflow import (
     HAPPY_PATH,
@@ -107,6 +111,9 @@ def _seed_application(repo: ApplicationRepository, features: dict | None = None)
     feats.setdefault("documents", {d: {"uploaded": True, "verified": None} for d in _CLEAN_DOCS})
     app = Application(applicant=Applicant(full_name="Priya Sharma"), features=feats)
     repo.save(app)
+    # Underwriting (#20) runs the consent gate (#8) before the bureau pull.
+    capture_authorization(app, BUREAU_PULL_PURPOSE)
+    repo.save(app)
     return app.application_id
 
 
@@ -160,17 +167,25 @@ _UNCERTAIN = {
 }
 
 
-async def _run_workflow(env, repo, audit, app_id, lead_reason=None, doc_extract=None) -> str:
+# Bureau (#10) supplies the credit data underwriting (#20) assembles, so scenarios
+# that decline/refer are driven by the bureau report — not seeded credit features.
+def _bureau(report: dict | None = None):
+    return make_mock_bureau_harness({HARD_INQUIRY: report or CLEAN_REPORT})
+
+
+async def _run_workflow(env, repo, audit, app_id, lead_reason=None, doc_extract=None, bureau_harness=None) -> str:
     activities = OriginationActivities(
         repo, audit,
         lead_reason=lead_reason or _lead_reason(_IN_SEGMENT),
         doc_extract=doc_extract or _doc_extract,
+        bureau_harness=bureau_harness or _bureau(),
     )
     async with Worker(
         env.client,
         task_queue=TASK_QUEUE,
         workflows=[LoanOriginationWorkflow],
-        activities=[activities.advance, activities.decide, activities.lead_qualify, activities.verify_kyc],
+        activities=[activities.advance, activities.decide, activities.lead_qualify,
+                    activities.verify_kyc, activities.underwrite],
     ):
         return await env.client.execute_workflow(
             LoanOriginationWorkflow.run,
@@ -206,11 +221,12 @@ async def test_knockout_applicant_is_declined():
     engine = make_engine()
     repo = ApplicationRepository(engine)
     audit = AuditStore(engine)
-    bad = dict(CLEAN_FEATURES, cibil_score=600)  # LOW_CIBIL hard knockout
-    app_id = _seed_application(repo, bad)
+    app_id = _seed_application(repo)
+    # Underwriting sources the score from the bureau → a low-score report knocks out.
+    low_score = {**CLEAN_REPORT, "score": 600}
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
-        result = await _run_workflow(env, repo, audit, app_id)
+        result = await _run_workflow(env, repo, audit, app_id, bureau_harness=_bureau(low_score))
 
     assert result == State.DECLINED.value
     decision = repo.get(app_id).decision
@@ -222,12 +238,12 @@ async def test_soft_hit_applicant_is_referred():
     engine = make_engine()
     repo = ApplicationRepository(engine)
     audit = AuditStore(engine)
-    # High existing obligations → DTI soft hit → escalate → REFER
-    soft = dict(CLEAN_FEATURES, monthly_obligations=60_000)
-    app_id = _seed_application(repo, soft)
+    app_id = _seed_application(repo)
+    # High existing obligations from the bureau → DTI soft hit → escalate → REFER.
+    high_debt = {**CLEAN_REPORT, "total_monthly_obligations": 60_000.0}
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
-        result = await _run_workflow(env, repo, audit, app_id)
+        result = await _run_workflow(env, repo, audit, app_id, bureau_harness=_bureau(high_debt))
 
     assert result == State.REFERRED.value
     assert repo.get(app_id).decision.disposition.value == "refer"
@@ -277,6 +293,22 @@ async def test_low_confidence_kyc_parks_in_exception():
     assert app.decision is None
 
 
+async def test_thin_file_parks_in_uw_exception():
+    engine = make_engine()
+    repo = ApplicationRepository(engine)
+    audit = AuditStore(engine)
+    app_id = _seed_application(repo)
+    thin = {"score": None, "has_record": False, "total_monthly_obligations": 0.0,
+            "tradelines": [], "report_id": "THIN"}
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        result = await _run_workflow(env, repo, audit, app_id, bureau_harness=_bureau(thin))
+
+    # Underwriting (#20) routed to UW_EXCEPTION — never reaches decision.
+    assert result == State.UW_EXCEPTION.value
+    assert repo.get(app_id).decision is None
+
+
 async def test_each_transition_emits_exactly_one_audit_event():
     engine = make_engine()
     repo = ApplicationRepository(engine)
@@ -310,7 +342,8 @@ async def test_workflow_replay_is_deterministic():
     audit = AuditStore(engine)
     app_id = _seed_application(repo)
     activities = OriginationActivities(
-        repo, audit, lead_reason=_lead_reason(_IN_SEGMENT), doc_extract=_doc_extract
+        repo, audit, lead_reason=_lead_reason(_IN_SEGMENT),
+        doc_extract=_doc_extract, bureau_harness=_bureau(),
     )
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -318,7 +351,8 @@ async def test_workflow_replay_is_deterministic():
             env.client,
             task_queue=TASK_QUEUE,
             workflows=[LoanOriginationWorkflow],
-            activities=[activities.advance, activities.decide, activities.lead_qualify, activities.verify_kyc],
+            activities=[activities.advance, activities.decide, activities.lead_qualify,
+                        activities.verify_kyc, activities.underwrite],
         ):
             handle = await env.client.start_workflow(
                 LoanOriginationWorkflow.run,

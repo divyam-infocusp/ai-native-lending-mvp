@@ -12,8 +12,9 @@ import asyncio
 
 from temporalio.client import Client
 
-from lending.agents import register_document
+from lending.agents import BUREAU_PULL_PURPOSE, register_document
 from lending.agents.onboarding import REQUIRED_DOCUMENTS
+from lending.consent import capture_authorization
 from lending.audit import AuditStore
 from lending.los import Applicant, Application, ApplicationRepository, make_engine
 from lending.settings import load_settings, require_pilot
@@ -44,6 +45,11 @@ async def _run_one(client, repo, audit, label, features) -> None:
     # something to verify (the mock OCR adapter supplies the extracted fields).
     for doc in REQUIRED_DOCUMENTS:
         register_document(repo, app.application_id, doc, reference=f"s3://demo/{app.application_id}/{doc}.pdf")
+    # Capture Layer-1 consent so underwriting's bureau pull passes the gate (#8).
+    # Re-load: register_document persisted document state on its own copy.
+    current = repo.get(app.application_id)
+    capture_authorization(current, BUREAU_PULL_PURPOSE)
+    repo.save(current)
     result = await client.execute_workflow(
         LoanOriginationWorkflow.run,
         app.application_id,
