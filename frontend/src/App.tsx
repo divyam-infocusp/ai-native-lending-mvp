@@ -3,6 +3,8 @@ import { RequireRole, useAuth } from "./auth/AuthContext";
 import { AuthPage } from "./components/AuthPage";
 import { Layout } from "./components/Layout";
 import { ApplicantJourney } from "./applicant/ApplicantJourney";
+import { ApplicantHome } from "./applicant/ApplicantHome";
+import { ApplicationStatus } from "./applicant/ApplicationStatus";
 import { PipelineList } from "./lender/PipelineList";
 import { ApplicationDetail } from "./lender/ApplicationDetail";
 
@@ -24,7 +26,27 @@ export default function App() {
         element={
           <RequireRole role="applicant">
             <Layout>
+              <ApplicantHome />
+            </Layout>
+          </RequireRole>
+        }
+      />
+      <Route
+        path="/apply/new"
+        element={
+          <RequireRole role="applicant">
+            <Layout>
               <ApplicantJourney />
+            </Layout>
+          </RequireRole>
+        }
+      />
+      <Route
+        path="/apply/:id"
+        element={
+          <RequireRole role="applicant">
+            <Layout>
+              <ApplicationStatus />
             </Layout>
           </RequireRole>
         }

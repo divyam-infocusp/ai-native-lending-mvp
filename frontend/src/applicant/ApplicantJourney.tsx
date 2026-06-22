@@ -1,29 +1,25 @@
 import { useEffect, useRef, useState } from "react";
-import { api, Application, BUREAU_PULL_PURPOSE, REQUIRED_DOCUMENTS } from "../api/client";
+import { useNavigate } from "react-router-dom";
+import { api, BUREAU_PULL_PURPOSE, REQUIRED_DOCUMENTS } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import { StateGraph } from "../components/StateGraph";
 import { Spinner, ErrorNote } from "../components/ui";
 
-type Step = "start" | "chat" | "consent" | "status";
+type Step = "start" | "chat" | "consent";
 interface ChatMsg {
   role: "assistant" | "user";
   text: string;
 }
 
-const TERMINAL = new Set([
-  "OFFER_GENERATED", "OFFER_ACCEPTED", "OFFER_EXPIRED",
-  "DECLINED", "LEAD_DECLINED", "REFERRED",
-  "KYC_EXCEPTION", "UW_EXCEPTION", "LEAD_EXCEPTION",
-]);
-
 function Panel({ children }: { children: React.ReactNode }) {
   return <div className="card p-6 animate-fade-in">{children}</div>;
 }
 
-export function ApplicantJourney() {
+// `resumeId` continues an existing (not-yet-submitted) application's conversation.
+export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
   const { user } = useAuth();
-  const [step, setStep] = useState<Step>("start");
-  const [appId, setAppId] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const [step, setStep] = useState<Step>(resumeId ? "chat" : "start");
+  const [appId, setAppId] = useState<string | null>(resumeId ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,8 +30,6 @@ export function ApplicantJourney() {
 
   const [attachOpen, setAttachOpen] = useState(false);
   const [uploaded, setUploaded] = useState<Set<string>>(new Set());
-
-  const [app, setApp] = useState<Application | null>(null);
 
   function fail(e: any) {
     setError(e.message ?? String(e));
@@ -55,13 +49,18 @@ export function ApplicantJourney() {
     }
   }
 
+  // Greeting / resume: the copilot's durable memory (keyed by application_id)
+  // continues the conversation where it left off.
   useEffect(() => {
     if (step === "chat" && appId && !greeted.current) {
       greeted.current = true;
       setBusy(true);
       api
         .onboardingMessage(appId, null)
-        .then((r) => setMessages([{ role: "assistant", text: r.assistant_message }]))
+        .then((r) => {
+          setMessages([{ role: "assistant", text: r.assistant_message }]);
+          if (r.complete) setStep("consent");
+        })
         .catch(fail)
         .finally(() => setBusy(false));
     }
@@ -114,32 +113,13 @@ export function ApplicantJourney() {
     try {
       await api.captureConsent(appId, BUREAU_PULL_PURPOSE);
       await api.startWorkflow(appId);
-      setStep("status");
+      navigate(`/apply/${appId}`);   // → tracked status page (#40)
     } catch (e) {
       fail(e);
     } finally {
       setBusy(false);
     }
   }
-
-  useEffect(() => {
-    if (step !== "status" || !appId) return;
-    let stop = false;
-    const poll = async () => {
-      try {
-        const a = await api.getApplication(appId);
-        if (!stop) setApp(a);
-      } catch {
-        /* keep polling */
-      }
-    };
-    poll();
-    const t = setInterval(poll, 2000);
-    return () => {
-      stop = true;
-      clearInterval(t);
-    };
-  }, [step, appId]);
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -230,21 +210,13 @@ export function ApplicantJourney() {
           </button>
         </Panel>
       )}
-
-      {step === "status" && (
-        <Panel>
-          <Outcome app={app} />
-        </Panel>
-      )}
     </div>
   );
 }
 
 function Stepper({ step }: { step: Step }) {
-  const steps: Step[] = ["start", "chat", "consent", "status"];
-  const labels: Record<Step, string> = {
-    start: "Start", chat: "Details & documents", consent: "Consent", status: "Outcome",
-  };
+  const steps: Step[] = ["start", "chat", "consent"];
+  const labels: Record<Step, string> = { start: "Start", chat: "Details & documents", consent: "Consent" };
   const idx = steps.indexOf(step);
   return (
     <div className="flex items-center gap-2 mb-6 text-xs">
@@ -260,66 +232,6 @@ function Stepper({ step }: { step: Step }) {
           {i < steps.length - 1 && <span className="text-slate-300">→</span>}
         </div>
       ))}
-    </div>
-  );
-}
-
-function Outcome({ app }: { app: Application | null }) {
-  const [explanation, setExplanation] = useState<string | null>(null);
-  const state = app?.workflow_state ?? null;
-  const done = state ? TERMINAL.has(state) : false;
-  const offer = app?.features?.offer_letter;
-  const inr = (n: any) => `₹${Number(n).toLocaleString("en-IN")}`;
-
-  useEffect(() => {
-    if (app && (state === "DECLINED" || state === "LEAD_DECLINED") && !explanation) {
-      api.getExplanation(app.application_id).then((r) => setExplanation(r.text)).catch(() => {});
-    }
-  }, [app, state]);
-
-  if (!done) {
-    return (
-      <div>
-        <h1 className="text-lg font-semibold text-slate-900 mb-1">Processing your application…</h1>
-        <p className="text-slate-500 mb-5">This updates live as your application moves through review.</p>
-        <StateGraph current={state} visited={new Set(state ? [state] : [])} />
-      </div>
-    );
-  }
-
-  if (offer) {
-    return (
-      <div>
-        <div className="rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-700 text-white p-6 mb-5">
-          <div className="text-emerald-100 text-sm">Congratulations 🎉</div>
-          <div className="text-2xl font-semibold">You're approved</div>
-          <div className="mt-3 text-4xl font-bold">{inr(offer.sanctioned_amount)}</div>
-          <div className="text-emerald-100">at {offer.interest_rate}% p.a. · {offer.tenure_months} months</div>
-        </div>
-        <dl className="grid grid-cols-2 gap-y-2 text-sm">
-          <dt className="text-slate-500">Monthly EMI</dt><dd className="font-medium text-right">{inr(offer.emi)}</dd>
-          <dt className="text-slate-500">Processing fee</dt><dd className="text-right">{inr(offer.processing_fee)} + GST {inr(offer.gst_on_fee)}</dd>
-          <dt className="text-slate-500">Net disbursal</dt><dd className="text-right">{inr(offer.net_disbursal_amount)}</dd>
-          <dt className="text-slate-500">Total payable</dt><dd className="text-right">{inr(offer.total_amount_payable)}</dd>
-          <dt className="text-slate-500">Offer valid until</dt><dd className="text-right">{String(offer.valid_until).slice(0, 10)}</dd>
-        </dl>
-      </div>
-    );
-  }
-
-  if (state === "REFERRED" || state?.endsWith("EXCEPTION")) {
-    return (
-      <div>
-        <h1 className="text-lg font-semibold text-amber-700">Your application needs a closer look</h1>
-        <p className="text-slate-500 mt-1.5">A member of our team is reviewing your application and will be in touch shortly.</p>
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <h1 className="text-lg font-semibold text-rose-700">We're unable to approve your application</h1>
-      {explanation && <p className="text-slate-600 mt-3 italic">{explanation}</p>}
     </div>
   );
 }
