@@ -22,10 +22,11 @@ from __future__ import annotations
 import inspect
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from lending.audit import AuditStore
+from lending.auth import AuthError, AuthService, User
 from lending.explanation import build_context, render
 
 from .repository import ApplicationRepository, make_engine
@@ -43,6 +44,18 @@ class ConsentIn(BaseModel):
 class DocumentIn(BaseModel):
     doc_type: str
     reference: Optional[str] = None
+
+
+class RegisterIn(BaseModel):
+    email: str
+    password: str
+    name: str = ""
+    role: str = "applicant"
+
+
+class LoginIn(BaseModel):
+    email: str
+    password: str
 
 
 async def _default_workflow_starter(application_id: str) -> str:
@@ -69,10 +82,15 @@ def create_app(
     audit: AuditStore | None = None,
     copilot=None,
     workflow_starter=None,
+    auth_service: AuthService | None = None,
 ) -> FastAPI:
     repo = repository or ApplicationRepository(make_engine())
     audit_store = audit or AuditStore(repo._engine)
     starter = workflow_starter or _default_workflow_starter
+    if auth_service is None:
+        from lending.settings import load_settings
+
+        auth_service = AuthService(repo._engine, load_settings().auth_secret)
 
     def get_copilot():
         # Lazily build the default (Gemini) copilot so importing the API never
@@ -89,33 +107,69 @@ def create_app(
     def get_repo() -> ApplicationRepository:
         return repo
 
-    def _require(application_id: str) -> Application:
+    # ---- Auth (#38) --------------------------------------------------------
+
+    def current_user(authorization: Optional[str] = Header(default=None)) -> User:
+        if not authorization or not authorization.lower().startswith("bearer "):
+            raise HTTPException(status_code=401, detail="missing bearer token")
+        user = auth_service.user_from_token(authorization.split(" ", 1)[1])
+        if user is None:
+            raise HTTPException(status_code=401, detail="invalid or expired token")
+        return user
+
+    def require_authorized(application_id: str, user: User) -> Application:
+        """Load the application + enforce access: underwriters see all; an
+        applicant only their own."""
         application = repo.get(application_id)
         if application is None:
             raise HTTPException(status_code=404, detail="application not found")
+        if user.role != "underwriter" and application.owner_user_id != user.user_id:
+            raise HTTPException(status_code=403, detail="forbidden")
         return application
 
     @app.get("/health")
     def health() -> dict:
         return {"status": "ok"}
 
+    @app.post("/auth/register")
+    def register(body: RegisterIn) -> dict:
+        try:
+            user, token = auth_service.register(body.email, body.password, body.name, body.role)
+        except AuthError as err:
+            raise HTTPException(status_code=400, detail=str(err))
+        return {"token": token, "user": user.public()}
+
+    @app.post("/auth/login")
+    def login(body: LoginIn) -> dict:
+        try:
+            user, token = auth_service.login(body.email, body.password)
+        except AuthError as err:
+            raise HTTPException(status_code=401, detail=str(err))
+        return {"token": token, "user": user.public()}
+
+    @app.get("/auth/me")
+    def me(user: User = Depends(current_user)) -> dict:
+        return user.public()
+
     # ---- Intake (#2) -------------------------------------------------------
 
     @app.post("/applications", status_code=201, response_model=Application)
     def create_application(
         payload: ApplicationCreate,
-        repo: ApplicationRepository = Depends(get_repo),
+        user: User = Depends(current_user),
     ) -> Application:
         application = Application(
             applicant=payload.applicant,
             features=payload.features,
             consent=payload.consent,
+            owner_user_id=user.user_id,        # tracked to the creating applicant (#38)
         )
         return repo.save(application)
 
     @app.get("/applications")
-    def list_applications() -> dict:
-        """Summaries of all applications, newest first (pipeline viewer #30)."""
+    def list_applications(user: User = Depends(current_user)) -> dict:
+        """Summaries, newest first. Underwriters see all; applicants see only their own."""
+        owner = None if user.role == "underwriter" else user.user_id
         items = [
             {
                 "application_id": a.application_id,
@@ -125,17 +179,18 @@ def create_app(
                 "disposition": a.decision.disposition.value if a.decision else None,
                 "updated_at": a.updated_at.isoformat(),
             }
-            for a in repo.list_all()
+            for a in repo.list_all(owner)
         ]
         return {"applications": items}
 
     @app.get("/applications/{application_id}", response_model=Application)
-    def read_application(application_id: str) -> Application:
-        return _require(application_id)
+    def read_application(application_id: str, user: User = Depends(current_user)) -> Application:
+        return require_authorized(application_id, user)
 
     @app.get("/applications/{application_id}/explanation")
-    def read_explanation(application_id: str, language: str = "en") -> dict:
-        application = _require(application_id)
+    def read_explanation(application_id: str, language: str = "en",
+                         user: User = Depends(current_user)) -> dict:
+        application = require_authorized(application_id, user)
         decision = application.decision
         reason_codes = list(decision.reason_codes) if decision else []
         rules_version = (decision.rules_version if decision else None) or "v1"
@@ -151,8 +206,9 @@ def create_app(
     # ---- Control + read (#36) ---------------------------------------------
 
     @app.post("/applications/{application_id}/onboarding/message")
-    def onboarding_message(application_id: str, body: OnboardingMessageIn) -> dict:
-        _require(application_id)
+    def onboarding_message(application_id: str, body: OnboardingMessageIn,
+                          user: User = Depends(current_user)) -> dict:
+        require_authorized(application_id, user)
         resp = get_copilot().turn(repo, audit_store, application_id, body.message)
         return {
             "application_id": application_id,
@@ -163,19 +219,21 @@ def create_app(
         }
 
     @app.post("/applications/{application_id}/consent")
-    def capture_consent(application_id: str, body: ConsentIn) -> dict:
+    def capture_consent(application_id: str, body: ConsentIn,
+                       user: User = Depends(current_user)) -> dict:
         from lending.consent import capture_authorization
 
-        application = _require(application_id)
+        application = require_authorized(application_id, user)
         capture_authorization(application, body.purpose, audit_store)
         repo.save(application)
         return {"application_id": application_id, "purpose": body.purpose, "status": "active"}
 
     @app.post("/applications/{application_id}/documents", status_code=201)
-    def upload_document(application_id: str, body: DocumentIn) -> dict:
+    def upload_document(application_id: str, body: DocumentIn,
+                       user: User = Depends(current_user)) -> dict:
         from lending.agents import register_document
 
-        _require(application_id)
+        require_authorized(application_id, user)
         try:
             register_document(repo, application_id, body.doc_type, reference=body.reference)
         except ValueError as err:
@@ -183,16 +241,16 @@ def create_app(
         return {"application_id": application_id, "doc_type": body.doc_type, "uploaded": True}
 
     @app.post("/applications/{application_id}/start", status_code=202)
-    async def start_application(application_id: str) -> dict:
-        _require(application_id)
+    async def start_application(application_id: str, user: User = Depends(current_user)) -> dict:
+        require_authorized(application_id, user)
         run_ref = starter(application_id)
         if inspect.isawaitable(run_ref):
             run_ref = await run_ref
         return {"application_id": application_id, "workflow_run": run_ref, "status": "started"}
 
     @app.get("/applications/{application_id}/audit")
-    def read_audit(application_id: str) -> dict:
-        _require(application_id)
+    def read_audit(application_id: str, user: User = Depends(current_user)) -> dict:
+        require_authorized(application_id, user)
         events = audit_store.reconstruct(application_id)
         return {
             "application_id": application_id,

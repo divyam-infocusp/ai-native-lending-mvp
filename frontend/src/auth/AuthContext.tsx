@@ -1,57 +1,60 @@
-// Mock auth (#demo). Deliberately structured so real authentication can replace
-// the provider internals WITHOUT touching consumers:
-//   - components read identity via useAuth()
-//   - route gating goes through <RequireRole>
-// To add real auth later: make login() call an auth API + store a token, and
-// hydrate identity from that token. The shape below (role + name) stays the same.
+// Real authentication (#38). Identity comes from the backend: login/register
+// return a bearer token (stored client-side); on load we hydrate from /auth/me.
+// Route gating goes through <RequireRole>.
 
 import { createContext, useContext, useEffect, useMemo, useState, ReactNode } from "react";
-import { Navigate } from "react-router-dom";
-
-export type Role = "applicant" | "underwriter";
-
-export interface Identity {
-  role: Role;
-  name: string;
-}
+import { Navigate, useLocation } from "react-router-dom";
+import { api, AuthUser, Role, tokenStore } from "../api/client";
 
 interface AuthState {
-  identity: Identity | null;
-  login: (identity: Identity) => void;
+  user: AuthUser | null;
+  loading: boolean;
+  login: (email: string, password: string) => Promise<AuthUser>;
+  register: (email: string, password: string, name: string, role: Role) => Promise<AuthUser>;
   logout: () => void;
 }
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
-const STORAGE_KEY = "lending.identity";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [identity, setIdentity] = useState<Identity | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  // Hydrate from storage (a real impl would validate a token here instead).
+  // Hydrate from a stored token on first load.
   useEffect(() => {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      try {
-        setIdentity(JSON.parse(raw));
-      } catch {
-        /* ignore */
-      }
+    if (!tokenStore.get()) {
+      setLoading(false);
+      return;
     }
+    api
+      .me()
+      .then(setUser)
+      .catch(() => tokenStore.clear())
+      .finally(() => setLoading(false));
   }, []);
 
   const value = useMemo<AuthState>(
     () => ({
-      identity,
-      login: (id) => {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(id));
-        setIdentity(id);
+      user,
+      loading,
+      login: async (email, password) => {
+        const { token, user } = await api.login(email, password);
+        tokenStore.set(token);
+        setUser(user);
+        return user;
+      },
+      register: async (email, password, name, role) => {
+        const { token, user } = await api.register(email, password, name, role);
+        tokenStore.set(token);
+        setUser(user);
+        return user;
       },
       logout: () => {
-        localStorage.removeItem(STORAGE_KEY);
-        setIdentity(null);
+        tokenStore.clear();
+        setUser(null);
       },
     }),
-    [identity],
+    [user, loading],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -63,11 +66,14 @@ export function useAuth(): AuthState {
   return ctx;
 }
 
-// Route guard. Today it only checks the mock role; a real impl would also verify
-// the session/token is valid and redirect to a login flow.
 export function RequireRole({ role, children }: { role: Role; children: ReactNode }) {
-  const { identity } = useAuth();
-  if (!identity) return <Navigate to="/" replace />;
-  if (identity.role !== role) return <Navigate to="/" replace />;
+  const { user, loading } = useAuth();
+  const location = useLocation();
+  if (loading) return <div className="min-h-full grid place-items-center text-slate-400">Loading…</div>;
+  if (!user) return <Navigate to="/login" replace state={{ from: location }} />;
+  if (user.role !== role) {
+    // Signed in as the other role — send them to their own home.
+    return <Navigate to={user.role === "applicant" ? "/apply" : "/pipeline"} replace />;
+  }
   return <>{children}</>;
 }

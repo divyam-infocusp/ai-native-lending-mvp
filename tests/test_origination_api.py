@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from lending.agents import OnboardingCopilot
 from lending.audit import AuditStore
+from lending.auth import AuthService
 from lending.los import Applicant, Application, ApplicationRepository, make_engine
 from lending.los.api import create_app
 from lending.los.schema import Decision, Disposition
@@ -28,6 +29,8 @@ def _make(copilot=None):
     engine = make_engine()
     repo = ApplicationRepository(engine)
     audit = AuditStore(engine)
+    auth = AuthService(engine, "test-secret")
+    applicant, token = auth.register("priya@example.com", "pw", "Priya Sharma", "applicant")
     started: list[str] = []
 
     def starter(application_id):           # injected — no Temporal
@@ -38,8 +41,9 @@ def _make(copilot=None):
         reason=_scripted([_turn("Hi! What's your PAN and date of birth?")]),
         checkpointer=MemorySaver(),
     )
-    app = create_app(repo, audit=audit, copilot=cop, workflow_starter=starter)
-    return TestClient(app), repo, audit, started
+    app = create_app(repo, audit=audit, copilot=cop, workflow_starter=starter, auth_service=auth)
+    client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
+    return client, repo, audit, started, applicant
 
 
 def _create(client, full_name="Priya Sharma") -> str:
@@ -104,7 +108,7 @@ def test_upload_unknown_document_type_is_400():
 # ---------------------------------------------------------------------------
 
 def test_start_invokes_the_injected_starter():
-    client, _, _, started = _make()
+    client, _, _, started, _ = _make()
     app_id = _create(client)
     resp = client.post(f"/applications/{app_id}/start")
     assert resp.status_code == 202
@@ -132,8 +136,8 @@ def test_audit_trail_returned_in_order():
 # ---------------------------------------------------------------------------
 
 def test_read_application_surfaces_decision_and_offer():
-    client, repo, *_ = _make()
-    app = Application(applicant=Applicant(full_name="Priya Sharma"))
+    client, repo, _, _, applicant = _make()
+    app = Application(applicant=Applicant(full_name="Priya Sharma"), owner_user_id=applicant.user_id)
     app.decision = Decision(disposition=Disposition.APPROVE, band="A", score=110)
     app.features = {"offer_letter": {"sanctioned_amount": 300000, "emi": 9757}}
     repo.save(app)

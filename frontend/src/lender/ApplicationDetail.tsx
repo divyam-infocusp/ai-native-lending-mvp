@@ -3,21 +3,14 @@ import { Link, useParams } from "react-router-dom";
 import { api, Application, AuditEvent } from "../api/client";
 import { StateGraph } from "../components/StateGraph";
 import { AuditTrail } from "../components/AuditTrail";
+import { Card, Pill, Spinner, ErrorNote, stateTone } from "../components/ui";
 
-const TERMINAL = new Set([
-  "OFFER_GENERATED",
-  "OFFER_ACCEPTED",
-  "OFFER_EXPIRED",
-  "DECLINED",
-  "LEAD_DECLINED",
-]);
-
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
+function Row({ k, v }: { k: string; v: React.ReactNode }) {
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-4">
-      <h2 className="text-sm font-semibold text-slate-700 mb-3">{title}</h2>
-      {children}
-    </div>
+    <>
+      <dt className="text-slate-500">{k}</dt>
+      <dd className="text-slate-800 font-medium text-right">{v}</dd>
+    </>
   );
 }
 
@@ -56,70 +49,68 @@ export function ApplicationDetail() {
   const offer = app?.features?.offer_letter;
   const uw = app?.features?.underwriting_summary;
   const decision = app?.decision;
+  const inr = (n: any) => `₹${Number(n).toLocaleString("en-IN")}`;
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
+    <div className="space-y-5">
+      <div className="flex items-start justify-between">
         <div>
-          <Link to="/pipeline" className="text-sm text-brand hover:underline">
-            ← Pipeline
-          </Link>
-          <h1 className="text-xl font-semibold text-slate-900 mt-1">
-            {app?.applicant.full_name ?? "Application"}
-          </h1>
-          <p className="text-xs text-slate-400">{id}</p>
+          <Link to="/pipeline" className="text-sm text-brand hover:underline">← Pipeline</Link>
+          <h1 className="text-2xl font-semibold text-slate-900 mt-1">{app?.applicant.full_name ?? "Application"}</h1>
+          <p className="text-xs text-slate-400 font-mono">{id}</p>
         </div>
-        <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-700">
-          {app?.workflow_state ?? "—"}
-        </span>
+        <Pill tone={stateTone(app?.workflow_state)}>{app?.workflow_state ?? "—"}</Pill>
       </div>
 
-      {error && <p className="text-sm text-rose-600 mb-3">{error}</p>}
+      {error && <ErrorNote>{error}</ErrorNote>}
+      {!app && !error && <Spinner label="Loading application…" />}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="space-y-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div className="space-y-5">
           <Card title="Workflow state">
             <StateGraph current={app?.workflow_state ?? null} visited={visited} />
           </Card>
 
           {decision && (
             <Card title="Decision">
-              <div className="text-sm space-y-1">
-                <div>
-                  <span className="font-semibold">{decision.disposition.toUpperCase()}</span> · band{" "}
-                  {decision.band} · score {decision.score}
-                </div>
-                <div className="text-slate-500">reasons: {JSON.stringify(decision.reason_codes)}</div>
-                {decision.explanation && <div className="italic text-slate-600">{decision.explanation}</div>}
-                <div className="text-xs text-slate-400">source: {decision.source}</div>
+              <div className="flex items-center gap-2 mb-2">
+                <Pill tone={stateTone(decision.disposition === "approve" ? "OFFER_GENERATED" : decision.disposition === "decline" ? "DECLINED" : "REFERRED")}>
+                  {decision.disposition.toUpperCase()}
+                </Pill>
+                <span className="text-sm text-slate-500">band {decision.band} · score {decision.score}</span>
               </div>
+              {decision.reason_codes?.length > 0 && (
+                <div className="text-sm text-slate-500">reasons: {decision.reason_codes.join(", ")}</div>
+              )}
+              {decision.explanation && <p className="text-sm text-slate-600 italic mt-1">{decision.explanation}</p>}
+              <div className="text-xs text-slate-400 mt-2">source: {decision.source}</div>
             </Card>
           )}
 
           {uw && (
             <Card title="Underwriting summary">
-              <dl className="grid grid-cols-2 gap-1 text-sm">
-                <dt className="text-slate-500">Bureau score</dt><dd>{uw.bureau_score}</dd>
-                <dt className="text-slate-500">Band</dt><dd>{uw.band}</dd>
-                <dt className="text-slate-500">DTI</dt><dd>{uw.dti}</dd>
-                <dt className="text-slate-500">Income</dt><dd>₹{Number(uw.monthly_income).toLocaleString()}</dd>
-                <dt className="text-slate-500">Obligations</dt><dd>₹{Number(uw.monthly_obligations).toLocaleString()}</dd>
-                <dt className="text-slate-500">Tradelines</dt><dd>{uw.tradelines_count}</dd>
+              <dl className="grid grid-cols-2 gap-y-1.5 text-sm">
+                <Row k="Bureau score" v={uw.bureau_score} />
+                <Row k="Risk band" v={uw.band} />
+                <Row k="DTI" v={uw.dti} />
+                <Row k="Monthly income" v={inr(uw.monthly_income)} />
+                <Row k="Obligations" v={inr(uw.monthly_obligations)} />
+                <Row k="Tradelines" v={uw.tradelines_count} />
               </dl>
             </Card>
           )}
 
           {offer && (
             <Card title="Offer letter">
-              <dl className="grid grid-cols-2 gap-1 text-sm">
-                <dt className="text-slate-500">Amount</dt><dd>₹{Number(offer.sanctioned_amount).toLocaleString()}</dd>
-                <dt className="text-slate-500">Rate</dt><dd>{offer.interest_rate}% ({offer.rate_type})</dd>
-                <dt className="text-slate-500">Tenure</dt><dd>{offer.tenure_months} months</dd>
-                <dt className="text-slate-500">EMI</dt><dd>₹{Number(offer.emi).toLocaleString()}</dd>
-                <dt className="text-slate-500">Processing fee</dt><dd>₹{Number(offer.processing_fee).toLocaleString()} + GST ₹{Number(offer.gst_on_fee).toLocaleString()}</dd>
-                <dt className="text-slate-500">Net disbursal</dt><dd>₹{Number(offer.net_disbursal_amount).toLocaleString()}</dd>
-                <dt className="text-slate-500">Total payable</dt><dd>₹{Number(offer.total_amount_payable).toLocaleString()}</dd>
-                <dt className="text-slate-500">Valid until</dt><dd>{String(offer.valid_until).slice(0, 10)}</dd>
+              <dl className="grid grid-cols-2 gap-y-1.5 text-sm">
+                <Row k="Sanctioned amount" v={inr(offer.sanctioned_amount)} />
+                <Row k="Interest rate" v={`${offer.interest_rate}% (${offer.rate_type})`} />
+                <Row k="Tenure" v={`${offer.tenure_months} months`} />
+                <Row k="EMI" v={inr(offer.emi)} />
+                <Row k="Processing fee" v={`${inr(offer.processing_fee)} + GST ${inr(offer.gst_on_fee)}`} />
+                <Row k="Net disbursal" v={inr(offer.net_disbursal_amount)} />
+                <Row k="Total payable" v={inr(offer.total_amount_payable)} />
+                <Row k="Valid until" v={String(offer.valid_until).slice(0, 10)} />
               </dl>
             </Card>
           )}
@@ -128,8 +119,7 @@ export function ApplicationDetail() {
           <Card title="Actions">
             {app && app.workflow_state?.endsWith("EXCEPTION") ? (
               <p className="text-sm text-amber-700">
-                This case is parked for review. Resolve / override actions arrive with the Ops
-                Console (#15).
+                Parked for review. Resolve / override actions arrive with the Ops Console (#15).
               </p>
             ) : (
               <p className="text-sm text-slate-400">No actions required.</p>
@@ -138,7 +128,7 @@ export function ApplicationDetail() {
         </div>
 
         <Card title="Audit trail">
-          <div className="max-h-[70vh] overflow-y-auto pr-1">
+          <div className="max-h-[72vh] overflow-y-auto pr-1">
             <AuditTrail events={events} />
           </div>
         </Card>

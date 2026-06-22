@@ -66,15 +66,19 @@ class ApplicationRepository:
             return None
         return Application.model_validate(result[0])
 
-    def list_all(self) -> list[Application]:
-        """Every application, most-recently-updated first (for the pipeline viewer #30)."""
+    def list_all(self, owner_user_id: str | None = None) -> list[Application]:
+        """Applications, most-recently-updated first. If owner_user_id is given,
+        only that applicant's applications (ownership scoping for #38)."""
         with self._engine.connect() as conn:
             rows = conn.execute(
                 select(applications_table.c.payload).order_by(
                     applications_table.c.updated_at.desc()
                 )
             ).all()
-        return [Application.model_validate(r[0]) for r in rows]
+        apps = [Application.model_validate(r[0]) for r in rows]
+        if owner_user_id is not None:
+            apps = [a for a in apps if a.owner_user_id == owner_user_id]
+        return apps
 
 
 def make_engine(url: str = "sqlite+pysqlite:///:memory:") -> Engine:

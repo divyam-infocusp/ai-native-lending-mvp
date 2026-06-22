@@ -139,8 +139,17 @@ def test_build_context_pulls_thresholds_from_policy():
 
 @pytest.fixture
 def client_and_repo():
+    from lending.auth import AuthService
+
     repo = ApplicationRepository(make_engine())
-    return TestClient(create_app(repository=repo)), repo
+    auth = AuthService(repo._engine, "test-secret")
+    # underwriter: can read any application's explanation regardless of owner (#38)
+    _user, token = auth.register("uw@example.com", "pw", "UW", "underwriter")
+    client = TestClient(
+        create_app(repository=repo, auth_service=auth),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    return client, repo
 
 
 def _seed_declined(repo) -> str:

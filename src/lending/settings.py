@@ -19,6 +19,7 @@ class Settings:
     temporal_address: str
     adapter_mode: str       # "mock" | "live"
     pilot_enabled: bool     # feature flag gating the live pilot path
+    auth_secret: str = "dev-secret-change-me"   # HMAC secret for bearer tokens (#38)
 
 
 class PilotDisabled(Exception):
@@ -31,6 +32,7 @@ def load_settings() -> Settings:
         temporal_address=os.environ.get("TEMPORAL_ADDRESS", "localhost:7233"),
         adapter_mode=os.environ.get("ADAPTER_MODE", "mock").lower(),
         pilot_enabled=os.environ.get("PILOT_ENABLED", "false").strip().lower() in _TRUTHY,
+        auth_secret=os.environ.get("AUTH_SECRET", "dev-secret-change-me"),
     )
 
 

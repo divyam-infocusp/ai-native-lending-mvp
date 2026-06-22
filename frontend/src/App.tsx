@@ -1,15 +1,24 @@
-import { Routes, Route } from "react-router-dom";
-import { RequireRole } from "./auth/AuthContext";
+import { Routes, Route, Navigate } from "react-router-dom";
+import { RequireRole, useAuth } from "./auth/AuthContext";
+import { AuthPage } from "./components/AuthPage";
 import { Layout } from "./components/Layout";
-import { RoleLanding } from "./components/RoleLanding";
 import { ApplicantJourney } from "./applicant/ApplicantJourney";
 import { PipelineList } from "./lender/PipelineList";
 import { ApplicationDetail } from "./lender/ApplicationDetail";
 
+function Home() {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="min-h-full grid place-items-center text-slate-400">Loading…</div>;
+  if (!user) return <Navigate to="/login" replace />;
+  return <Navigate to={user.role === "applicant" ? "/apply" : "/pipeline"} replace />;
+}
+
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<RoleLanding />} />
+      <Route path="/" element={<Home />} />
+      <Route path="/login" element={<AuthPage mode="login" />} />
+      <Route path="/register" element={<AuthPage mode="register" />} />
       <Route
         path="/apply"
         element={
@@ -40,6 +49,7 @@ export default function App() {
           </RequireRole>
         }
       />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

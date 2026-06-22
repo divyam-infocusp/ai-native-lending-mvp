@@ -35,7 +35,15 @@ def repo() -> ApplicationRepository:
 
 @pytest.fixture
 def client(repo) -> TestClient:
-    return TestClient(create_app(repository=repo))
+    # The API now requires auth (#38); authenticate the test client as an applicant.
+    from lending.auth import AuthService
+
+    auth = AuthService(repo._engine, "test-secret")
+    _user, token = auth.register("tester@example.com", "pw", "Tester", "applicant")
+    return TestClient(
+        create_app(repository=repo, auth_service=auth),
+        headers={"Authorization": f"Bearer {token}"},
+    )
 
 
 def fully_populated() -> Application:

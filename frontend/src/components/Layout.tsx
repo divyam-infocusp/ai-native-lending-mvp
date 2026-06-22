@@ -1,38 +1,40 @@
 import { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { Brand, Pill } from "./ui";
 
 export function Layout({ children }: { children: ReactNode }) {
-  const { identity, logout } = useAuth();
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
 
   return (
     <div className="min-h-full">
-      <header className="bg-white border-b border-slate-200">
+      <header className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-slate-200">
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="font-semibold text-slate-900">AI-Native Lending</span>
-            {identity && (
-              <span className="text-xs uppercase tracking-wide rounded-full bg-slate-100 px-2 py-0.5 text-slate-500">
-                {identity.role}
-              </span>
+          <Brand />
+          <div className="flex items-center gap-4">
+            {user && (
+              <div className="flex items-center gap-3">
+                <Pill tone={user.role === "underwriter" ? "brand" : "green"}>{user.role}</Pill>
+                <div className="text-right leading-tight hidden sm:block">
+                  <div className="text-sm font-medium text-slate-700">{user.name}</div>
+                  <div className="text-xs text-slate-400">{user.email}</div>
+                </div>
+              </div>
             )}
-          </div>
-          <div className="flex items-center gap-4 text-sm">
-            {identity && <span className="text-slate-500">{identity.name}</span>}
             <button
               onClick={() => {
                 logout();
-                navigate("/");
+                navigate("/login");
               }}
-              className="text-slate-500 hover:text-slate-800"
+              className="btn-ghost text-sm"
             >
-              Switch role
+              Sign out
             </button>
           </div>
         </div>
       </header>
-      <main className="max-w-6xl mx-auto px-6 py-6">{children}</main>
+      <main className="max-w-6xl mx-auto px-6 py-8">{children}</main>
     </div>
   );
 }
