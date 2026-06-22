@@ -81,6 +81,21 @@ def test_assemble_features_reports_data_gap():
     assert "employment_tenure_months" in missing
 
 
+def test_assemble_derives_age_from_dob_when_age_absent():
+    from datetime import date
+
+    repo, _ = _stores()
+    stated = {k: v for k, v in STATED.items() if k != "age"}   # no age, like the UI flow
+    app = Application(applicant=Applicant(full_name="Priya", date_of_birth="1994-02-11"),
+                      features=stated)
+    repo.save(app)
+    from lending.adapters import pull_bureau
+    features, missing = assemble_features(app, pull_bureau(_bureau(), app.application_id),
+                                          today=date(2026, 6, 1))
+    assert missing == []
+    assert features.age == 32      # 2026 - 1994
+
+
 def test_assemble_infers_is_salaried_from_employment_type():
     repo, _ = _stores()
     stated = {**STATED}

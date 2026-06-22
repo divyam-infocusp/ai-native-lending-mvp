@@ -148,6 +148,18 @@ def test_read_application_surfaces_decision_and_offer():
 # 404s
 # ---------------------------------------------------------------------------
 
+def test_list_applications_returns_summaries():
+    client, *_ = _make()
+    a1 = _create(client, "Priya Sharma")
+    a2 = _create(client, "Rahul Verma")
+    body = client.get("/applications").json()
+    ids = {item["application_id"] for item in body["applications"]}
+    assert {a1, a2} <= ids
+    sample = next(i for i in body["applications"] if i["application_id"] == a1)
+    assert sample["applicant_name"] == "Priya Sharma"
+    assert "workflow_state" in sample and "disposition" in sample
+
+
 def test_unknown_application_is_404():
     client, *_ = _make()
     assert client.get("/applications/nope/audit").status_code == 404

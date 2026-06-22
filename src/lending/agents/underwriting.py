@@ -19,8 +19,9 @@ Thin file (no bureau record) or a data gap (a required engine input missing) →
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from lending.adapters import pull_bureau
@@ -45,6 +46,19 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _age_from_dob(dob: Optional[str], today: date) -> Optional[int]:
+    """Derive age from a date-of-birth string (onboarding collects DOB, not age).
+    Handles ISO (YYYY-MM-DD) and common Indian (DD-MM-YYYY / DD/MM/YYYY) forms."""
+    if not dob:
+        return None
+    digits = re.findall(r"\d+", str(dob))
+    year = next((int(d) for d in digits if len(d) == 4 and 1900 <= int(d) <= today.year), None)
+    if year is None:
+        return None
+    age = today.year - year
+    return age if 0 < age < 120 else None
+
+
 @dataclass(frozen=True)
 class UnderwritingResult:
     status: str                               # "completed" | "exception"
@@ -53,14 +67,20 @@ class UnderwritingResult:
     reasons: list = field(default_factory=list)  # exception reasons
 
 
-def assemble_features(application, report) -> tuple[Optional[ApplicantFeatures], list[str]]:
+def assemble_features(application, report, *, today: Optional[date] = None) -> tuple[Optional[ApplicantFeatures], list[str]]:
     """Combine bureau credit data with stated/verified application data into the
-    engine's ApplicantFeatures. Returns (features, []) or (None, missing_fields)."""
+    engine's ApplicantFeatures. Returns (features, []) or (None, missing_fields).
+    Age is taken from features if present, else derived from the applicant's DOB
+    (onboarding collects DOB, not age)."""
     feats = application.features or {}
     income = feats.get("monthly_income") or feats.get("gross_monthly_income")
     is_salaried = feats.get("is_salaried")
     if is_salaried is None and feats.get("employment_type"):
         is_salaried = feats["employment_type"] == "salaried"
+
+    age = feats.get("age")
+    if age is None:
+        age = _age_from_dob(getattr(application.applicant, "date_of_birth", None), today or date.today())
 
     candidate = {
         # credit data — sourced from the bureau (authoritative)
@@ -68,7 +88,7 @@ def assemble_features(application, report) -> tuple[Optional[ApplicantFeatures],
         "monthly_obligations": report.total_monthly_obligations,
         "has_cibil_record": report.has_record,
         # stated / verified data — from the application (KYC, onboarding)
-        "age": feats.get("age"),
+        "age": age,
         "monthly_income": income,
         "employment_tenure_months": feats.get("employment_tenure_months"),
         "loan_amount_requested": feats.get("loan_amount_requested"),
@@ -131,7 +151,7 @@ def underwrite(
         return _exception(repository, audit, application, ["thin_file"], now)
 
     # 4. Assemble engine inputs; a data gap → exception.
-    features, missing = assemble_features(application, report)
+    features, missing = assemble_features(application, report, today=(now or _utcnow()).date())
     if features is None:
         return _exception(repository, audit, application,
                           [f"data_gap:{m}" for m in missing], now)

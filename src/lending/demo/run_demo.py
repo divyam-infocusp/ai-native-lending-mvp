@@ -38,6 +38,75 @@ OUT_OF_SCOPE_FEATURES = {
 }
 
 
+def _print_agent(seq: int, p: dict) -> None:
+    agent = p.get("agent", "?")
+    if agent == "lead-qualification":
+        print(f"  {seq:>3}. ◆ lead-qual    status={p.get('status')} reason={p.get('reason_code')} "
+              f"confidence={p.get('confidence')}")
+        if p.get("reasoning"):
+            print(f"          ↳ reasoning: {p['reasoning']}")
+    elif agent == "document-intelligence":
+        print(f"  {seq:>3}. ◆ doc-intel    status={p.get('status')}")
+        fc = p.get("field_confidence", {})
+        if fc:
+            shown = ", ".join(f"{k}={v['confidence']:.2f}" for k, v in list(fc.items())[:6])
+            print(f"          ↳ field confidence: {shown}")
+        xc = p.get("cross_checks", [])
+        if xc:
+            matched = sum(1 for c in xc if c["matches"])
+            print(f"          ↳ cross-checks: {matched}/{len(xc)} matched across documents")
+        if p.get("exception_reasons"):
+            print(f"          ↳ exceptions: {p['exception_reasons']}")
+    elif agent == "underwriting":
+        if p.get("status") == "completed":
+            s = p.get("summary", {})
+            print(f"  {seq:>3}. ◆ underwriting status=completed")
+            print(f"          ↳ bureau_score={s.get('bureau_score')} band={s.get('band')} "
+                  f"DTI={s.get('dti')} income={s.get('monthly_income')} "
+                  f"obligations={s.get('monthly_obligations')} tradelines={s.get('tradelines_count')}")
+            if s.get("reason_codes"):
+                print(f"          ↳ engine reasons: {s['reason_codes']}")
+        else:
+            print(f"  {seq:>3}. ◆ underwriting status=exception reasons={p.get('reasons')}")
+    elif agent == "decision-qa":
+        if p.get("action") == "offer_delivered":
+            o = p.get("offer_letter", {})
+            print(f"  {seq:>3}. ◆ decision-qa  OFFER DELIVERED (e-sign envelope={p.get('esign_envelope')})")
+            print(f"          ↳ amount=₹{o.get('sanctioned_amount', 0):,.0f}  rate={o.get('interest_rate')}%  "
+                  f"tenure={o.get('tenure_months')}m  EMI=₹{o.get('emi', 0):,.0f}")
+            print(f"          ↳ processing_fee=₹{o.get('processing_fee', 0):,.0f} +GST ₹{o.get('gst_on_fee', 0):,.0f}  "
+                  f"net_disbursal=₹{o.get('net_disbursal_amount', 0):,.0f}")
+            print(f"          ↳ total_payable=₹{o.get('total_amount_payable', 0):,.0f}  "
+                  f"valid_until={o.get('valid_until', '')[:10]}")
+        else:
+            extra = f" issues={p['issues']}" if p.get("issues") else ""
+            print(f"  {seq:>3}. ◆ decision-qa  qa_ok={p.get('qa_ok')} disposition={p.get('disposition')}{extra}")
+    else:
+        print(f"  {seq:>3}. ◆ {agent}  status={p.get('status')}")
+
+
+def _print_event(event) -> None:
+    seq, p, et = event.seq, event.payload, event.event_type
+    if et == "state_transition":
+        print(f"  {seq:>3}. ▸ STATE        {p['from']} → {p['to']}")
+    elif et == "consent":
+        if p.get("layer") == 2:
+            ref = (p.get("layer2_reference") or "")[:8]
+            print(f"  {seq:>3}. · consent      L2 artifact minted for '{p.get('purpose')}' "
+                  f"(honors L1 '{p.get('layer1_purpose')}', ref={ref}…)")
+        else:
+            print(f"  {seq:>3}. · consent      L1 {p.get('action')} for '{p.get('purpose')}'")
+    elif et == "decision":
+        print(f"  {seq:>3}. ★ DECISION     {p['disposition'].upper()}  "
+              f"band={p.get('band')} score={p.get('score')} reasons={p.get('reason_codes')}")
+        if p.get("explanation"):
+            print(f"          ↳ explanation: {p['explanation']}")
+    elif et == "agent_reasoning":
+        _print_agent(seq, p)
+    else:
+        print(f"  {seq:>3}. {et}")
+
+
 async def _run_one(client, repo, audit, label, features) -> None:
     app = Application(applicant=Applicant(full_name=f"{label} demo"), features=features)
     repo.save(app)
@@ -57,26 +126,13 @@ async def _run_one(client, repo, audit, label, features) -> None:
         task_queue=TASK_QUEUE,
     )
 
-    print(f"\n=== [{label}] application {app.application_id} → final state: {result} ===")
+    print(f"\n{'=' * 80}")
+    print(f"  [{label}]  application {app.application_id}")
+    print(f"  FINAL STATE: {result}")
+    print(f"{'=' * 80}")
     # The full per-state trail, straight from the audit store (#6).
     for event in audit.reconstruct(app.application_id):
-        if event.event_type == "state_transition":
-            p = event.payload
-            print(f"  {event.seq:>3}. state       {p['from']:>22}  →  {p['to']}")
-        elif event.event_type == "decision":
-            p = event.payload
-            print(f"  {event.seq:>3}. decision    {p['disposition'].upper()}  "
-                  f"band={p.get('band')} score={p.get('score')} reasons={p.get('reason_codes')}")
-            if p.get("explanation"):
-                print(f"       explanation: {p['explanation']}")
-        elif event.event_type == "agent_reasoning":
-            p = event.payload
-            print(f"  {event.seq:>3}. agent       {p.get('agent')}  status={p.get('status')} "
-                  f"reason={p.get('reason_code')} confidence={p.get('confidence')}")
-            if p.get("reasoning"):
-                print(f"       reasoning: {p['reasoning']}")
-        else:
-            print(f"  {event.seq:>3}. {event.event_type}")
+        _print_event(event)
 
 
 async def main() -> None:

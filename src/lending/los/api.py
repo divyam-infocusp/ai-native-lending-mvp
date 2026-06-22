@@ -113,6 +113,22 @@ def create_app(
         )
         return repo.save(application)
 
+    @app.get("/applications")
+    def list_applications() -> dict:
+        """Summaries of all applications, newest first (pipeline viewer #30)."""
+        items = [
+            {
+                "application_id": a.application_id,
+                "applicant_name": a.applicant.full_name,
+                "status": a.status.value,
+                "workflow_state": a.workflow_state,
+                "disposition": a.decision.disposition.value if a.decision else None,
+                "updated_at": a.updated_at.isoformat(),
+            }
+            for a in repo.list_all()
+        ]
+        return {"applications": items}
+
     @app.get("/applications/{application_id}", response_model=Application)
     def read_application(application_id: str) -> Application:
         return _require(application_id)

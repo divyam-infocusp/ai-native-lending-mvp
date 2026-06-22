@@ -66,6 +66,16 @@ class ApplicationRepository:
             return None
         return Application.model_validate(result[0])
 
+    def list_all(self) -> list[Application]:
+        """Every application, most-recently-updated first (for the pipeline viewer #30)."""
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                select(applications_table.c.payload).order_by(
+                    applications_table.c.updated_at.desc()
+                )
+            ).all()
+        return [Application.model_validate(r[0]) for r in rows]
+
 
 def make_engine(url: str = "sqlite+pysqlite:///:memory:") -> Engine:
     """Create an engine. Default is in-memory SQLite (tests); pass a Postgres URL

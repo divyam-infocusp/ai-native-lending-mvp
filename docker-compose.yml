@@ -49,10 +49,17 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      temporal:
+        condition: service_started
     environment:
       DATABASE_URL: postgresql+psycopg://lending:lending@postgres:5432/lending
+      TEMPORAL_ADDRESS: temporal:7233          # POST /applications/{id}/start
       ADAPTER_MODE: mock
       PILOT_ENABLED: "true"
+      # Gemini (Onboarding Copilot via POST /onboarding/message) — from host env / .env.
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      MODEL_NAME: ${MODEL_NAME:-gemini-3-flash-preview}
+      MODEL_NAME_LITE: ${MODEL_NAME_LITE:-gemini-3.1-flash-lite-preview}
     ports: ["${API_PORT:-8000}:8000"]
     command: ["uvicorn", "lending.los.asgi:app", "--host", "0.0.0.0", "--port", "8000"]
 
@@ -74,6 +81,13 @@ services:
       MODEL_NAME_LITE: ${MODEL_NAME_LITE:-gemini-3.1-flash-lite-preview}
     command: ["python", "-m", "lending.workflow.worker"]
     restart: on-failure
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      api:
+        condition: service_started
+    ports: ["${FRONTEND_PORT:-3000}:80"]
 
 volumes:
   pgdata:
