@@ -99,6 +99,7 @@ async def main() -> None:
             activities.verify_kyc,
             activities.underwrite,
             activities.deliver_offer,
+            activities.record_resolution,
         ],
     )
     await worker.run()

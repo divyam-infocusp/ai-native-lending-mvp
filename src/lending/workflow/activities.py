@@ -143,6 +143,20 @@ class OriginationActivities:
         return _UW_STATUS_TO_STATE[result.status].value
 
     @activity.defn
+    async def record_resolution(
+        self, application_id: str, from_state: str, to_state: str,
+        reviewer: str, reason_code: str | None,
+    ) -> None:
+        """Audit a reviewer's resolution of a parked case (#15) as a HUMAN_ACTION
+        with the reviewer's identity. The state change itself is audited by advance()."""
+        self._audit.append(
+            application_id,
+            EventType.HUMAN_ACTION,
+            {"action": "resolve", "from": from_state, "to": to_state, "reason_code": reason_code},
+            actor=f"underwriter:{reviewer}",
+        )
+
+    @activity.defn
     async def advance(self, application_id: str, from_state: str, to_state: str) -> str:
         # Guard: reject any move not on the §4 diagram.
         assert_legal(State(from_state), State(to_state))

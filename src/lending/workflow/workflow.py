@@ -6,14 +6,10 @@ this application?", validates the move, and advances — repeating until the
 decider says stop. The workflow body is deterministic (it only calls a pure
 decider + activities), so Temporal can replay it after a crash.
 
-The decider is the single extension point. Today it is **stubbed** to follow the
-clean happy path to OFFER_GENERATED. Real branch-point logic slots in here
-without touching the loop:
-  - KYC_IN_PROGRESS → KYC_VERIFIED | KYC_EXCEPTION   (confidence #5; park via signal #15)
-  - UNDERWRITING    → DECISION_READY | UW_EXCEPTION  (data completeness #15)
-  - DECISION_READY  → APPROVED | DECLINED | REFERRED (rules + scorecard #18)
-
-Human-wait via signals (parking at *_EXCEPTION) is wired in #15.
+The decider is the single extension point. Real branch-point logic lives in the
+loop (#18/#19/#20/#21/#23). Human-in-the-loop (#15): at the exception states and
+REFERRED the workflow **parks** — it durably waits for a `resolve` signal from a
+reviewer (Ops Console) and then advances to the resolved (legal) state.
 """
 from __future__ import annotations
 
@@ -23,9 +19,15 @@ from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
     from .activities import OriginationActivities
-    from .statemachine import HAPPY_PATH, State
+    from .statemachine import HAPPY_PATH, State, is_legal
 
 TASK_QUEUE = "loan-origination"
+
+# States where the workflow waits for a human decision before continuing (#15):
+# the three exception states + REFERRED (borderline → underwriter approves/declines).
+_PARK_STATES = frozenset({
+    State.LEAD_EXCEPTION, State.KYC_EXCEPTION, State.UW_EXCEPTION, State.REFERRED,
+})
 
 # Stub next-state policy, derived from the canonical happy path so there is one
 # source of truth. A state with no entry here ends the run (e.g. OFFER_GENERATED
@@ -41,6 +43,15 @@ def stub_next_state(current: State) -> State | None:
 
 @workflow.defn
 class LoanOriginationWorkflow:
+    def __init__(self) -> None:
+        # Set by the `resolve` signal when a reviewer resolves a parked case (#15).
+        self._resolution: dict | None = None
+
+    @workflow.signal
+    def resolve(self, resolution: dict) -> None:
+        """Reviewer resolution for a parked case: {to_state, reviewer, reason_code}."""
+        self._resolution = resolution
+
     @workflow.run
     async def run(self, application_id: str) -> str:
         current = HAPPY_PATH[0]
@@ -85,10 +96,25 @@ class LoanOriginationWorkflow:
                     start_to_close_timeout=timedelta(seconds=30),  # pricing + notify + e-sign
                 )
                 next_state = State(outcome)  # OFFER_GENERATED
+            elif current in _PARK_STATES:
+                # Human-in-the-loop (#15): park durably until a reviewer resolves.
+                await workflow.wait_condition(lambda: self._resolution is not None)
+                resolution = self._resolution
+                self._resolution = None
+                to_state = State(resolution["to_state"])
+                if not is_legal(current, to_state):
+                    continue  # ignore an illegal resolution; keep waiting
+                await workflow.execute_activity(
+                    OriginationActivities.record_resolution,
+                    args=[application_id, current.value, to_state.value,
+                          resolution.get("reviewer", "unknown"), resolution.get("reason_code")],
+                    start_to_close_timeout=timedelta(seconds=10),
+                )
+                next_state = to_state
             else:
                 next_state = stub_next_state(current)
             if next_state is None:
-                break  # done (offer generated, or a terminal/referred end)
+                break  # done (offer generated, or a terminal end)
             result = await workflow.execute_activity(
                 OriginationActivities.advance,
                 args=[application_id, current.value, next_state.value],

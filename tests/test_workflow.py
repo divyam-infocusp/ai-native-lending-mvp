@@ -196,7 +196,27 @@ def _activities(repo, audit, lead_reason=None, doc_extract=None, bureau_harness=
 
 
 _ALL_ACTIVITIES = (lambda a: [a.advance, a.decide, a.lead_qualify, a.verify_kyc,
-                              a.underwrite, a.deliver_offer])
+                              a.underwrite, a.deliver_offer, a.record_resolution])
+
+
+async def _run_with_resolution(env, repo, audit, app_id, resolution, *,
+                               lead_reason=None, doc_extract=None, bureau_harness=None) -> str:
+    """Start the workflow and signal a reviewer resolution (#15) — used for the
+    park-and-resume paths. The signal is buffered, so the workflow consumes it
+    when it reaches the parked state."""
+    activities = _activities(repo, audit, lead_reason, doc_extract, bureau_harness)
+    async with Worker(
+        env.client,
+        task_queue=TASK_QUEUE,
+        workflows=[LoanOriginationWorkflow],
+        activities=_ALL_ACTIVITIES(activities),
+    ):
+        handle = await env.client.start_workflow(
+            LoanOriginationWorkflow.run, app_id,
+            id=f"wf-{uuid.uuid4().hex}", task_queue=TASK_QUEUE,
+        )
+        await handle.signal(LoanOriginationWorkflow.resolve, resolution)
+        return await handle.result()
 
 
 async def _run_workflow(env, repo, audit, app_id, lead_reason=None, doc_extract=None, bureau_harness=None) -> str:
@@ -260,19 +280,23 @@ async def test_knockout_applicant_is_declined():
     assert "LOW_CIBIL" in decision.reason_codes
 
 
-async def test_soft_hit_applicant_is_referred():
+async def test_referred_parks_then_underwriter_resolves():
     engine = make_engine()
     repo = ApplicationRepository(engine)
     audit = AuditStore(engine)
     app_id = _seed_application(repo)
-    # High existing obligations from the bureau → DTI soft hit → escalate → REFER.
+    # High obligations → DTI soft hit → REFER → parks for an underwriter (#15).
     high_debt = {**CLEAN_REPORT, "total_monthly_obligations": 60_000.0}
+    resolution = {"to_state": "DECLINED", "reviewer": "u1", "reason_code": "MANUAL_DECLINE"}
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
-        result = await _run_workflow(env, repo, audit, app_id, bureau_harness=_bureau(high_debt))
+        result = await _run_with_resolution(env, repo, audit, app_id, resolution,
+                                            bureau_harness=_bureau(high_debt))
 
-    assert result == State.REFERRED.value
-    assert repo.get(app_id).decision.disposition.value == "refer"
+    assert result == State.DECLINED.value
+    # the human action is audited with the reviewer's identity
+    ha = [e for e in audit.reconstruct(app_id) if e.event_type == "human_action"]
+    assert ha and ha[-1].actor == "underwriter:u1" and ha[-1].payload["to"] == "DECLINED"
 
 
 async def test_out_of_scope_lead_declined_early():
@@ -290,49 +314,56 @@ async def test_out_of_scope_lead_declined_early():
     assert len([e for e in audit.reconstruct(app_id) if e.event_type == "decision"]) == 0
 
 
-async def test_uncertain_lead_parks_in_exception():
+async def test_uncertain_lead_parks_then_resolves_to_declined():
     engine = make_engine()
     repo = ApplicationRepository(engine)
     audit = AuditStore(engine)
     app_id = _seed_application(repo)
+    resolution = {"to_state": "LEAD_DECLINED", "reviewer": "u1", "reason_code": "SPAM"}
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
-        result = await _run_workflow(env, repo, audit, app_id, lead_reason=_lead_reason(_UNCERTAIN))
+        result = await _run_with_resolution(env, repo, audit, app_id, resolution,
+                                            lead_reason=_lead_reason(_UNCERTAIN))
 
-    assert result == State.LEAD_EXCEPTION.value
+    # Parked at LEAD_EXCEPTION, the reviewer rejects → LEAD_DECLINED.
+    assert result == State.LEAD_DECLINED.value
     assert repo.get(app_id).decision is None
 
 
-async def test_low_confidence_kyc_parks_in_exception():
+async def test_low_confidence_kyc_parks_then_resumes_to_offer():
     engine = make_engine()
     repo = ApplicationRepository(engine)
     audit = AuditStore(engine)
     app_id = _seed_application(repo)
+    # KYC_EXCEPTION (unreadable Aadhaar) → reviewer re-verifies → resume the flow.
+    resolution = {"to_state": "KYC_VERIFIED", "reviewer": "u1", "reason_code": "DOC_REVERIFIED"}
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
-        result = await _run_workflow(env, repo, audit, app_id, doc_extract=_doc_extract_lowconf)
+        result = await _run_with_resolution(env, repo, audit, app_id, resolution,
+                                            doc_extract=_doc_extract_lowconf)
 
-    # Document Intelligence (#19) routed to KYC_EXCEPTION — never reaches decision.
-    assert result == State.KYC_EXCEPTION.value
-    app = repo.get(app_id)
-    assert app.workflow_state == State.KYC_EXCEPTION.value
-    assert app.decision is None
+    # Resolving KYC_EXCEPTION → KYC_VERIFIED resumes underwriting → decision → offer.
+    assert result == State.OFFER_GENERATED.value
+    assert repo.get(app_id).decision.disposition.value == "approve"
+    ha = [e for e in audit.reconstruct(app_id) if e.event_type == "human_action"]
+    assert ha and ha[-1].payload["from"] == "KYC_EXCEPTION" and ha[-1].payload["to"] == "KYC_VERIFIED"
 
 
-async def test_thin_file_parks_in_uw_exception():
+async def test_thin_file_parks_then_resumes_to_decision():
     engine = make_engine()
     repo = ApplicationRepository(engine)
     audit = AuditStore(engine)
     app_id = _seed_application(repo)
     thin = {"score": None, "has_record": False, "total_monthly_obligations": 0.0,
             "tradelines": [], "report_id": "THIN"}
+    resolution = {"to_state": "DECISION_READY", "reviewer": "u1", "reason_code": "MANUAL_REVIEW_OK"}
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
-        result = await _run_workflow(env, repo, audit, app_id, bureau_harness=_bureau(thin))
+        result = await _run_with_resolution(env, repo, audit, app_id, resolution,
+                                            bureau_harness=_bureau(thin))
 
-    # Underwriting (#20) routed to UW_EXCEPTION — never reaches decision.
-    assert result == State.UW_EXCEPTION.value
-    assert repo.get(app_id).decision is None
+    # Resolving UW_EXCEPTION → DECISION_READY resumes the decision → offer.
+    assert result == State.OFFER_GENERATED.value
 
 
 async def test_each_transition_emits_exactly_one_audit_event():
