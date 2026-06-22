@@ -13,8 +13,25 @@ from .bureau import (
     make_mock_bureau_harness,
     pull_bureau,
 )
+from .esign import (
+    ESIGN_PROVIDER,
+    ESignEnvelope,
+    SignatureEvent,
+    make_mock_esign_harness,
+    parse_signature_callback,
+    request_signature,
+)
 from .idempotency import IdempotencyStore, InMemoryIdempotencyStore
 from .mock import MockAdapter
+from .notifications import (
+    EMAIL,
+    NOTIFICATIONS_PROVIDER,
+    SMS,
+    WHATSAPP,
+    NotificationReceipt,
+    make_mock_notifications_harness,
+    send_notification,
+)
 from .registry import AdapterHarness, AdapterRegistry
 
 __all__ = [
@@ -34,4 +51,17 @@ __all__ = [
     "Tradeline",
     "pull_bureau",
     "make_mock_bureau_harness",
+    "NOTIFICATIONS_PROVIDER",
+    "EMAIL",
+    "SMS",
+    "WHATSAPP",
+    "NotificationReceipt",
+    "send_notification",
+    "make_mock_notifications_harness",
+    "ESIGN_PROVIDER",
+    "ESignEnvelope",
+    "SignatureEvent",
+    "request_signature",
+    "parse_signature_callback",
+    "make_mock_esign_harness",
 ]
