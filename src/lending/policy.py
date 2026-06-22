@@ -119,3 +119,16 @@ CONFIDENCE_POLICY: dict[str, dict] = {
         ),
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# Consent — two-layer gate parameters (§16.6)
+# ---------------------------------------------------------------------------
+CONSENT_POLICY: dict[str, dict] = {
+    "v1": {
+        # A Layer-2 per-pull artifact is only valid for this long after minting;
+        # an older one is stale and may not authorize a pull (forces a fresh
+        # per-pull artifact each time, per §16.6).
+        "l2_freshness_seconds": 300,
+    },
+}
