@@ -101,6 +101,16 @@ export function DetailsForm({
     }
   }
 
+  // Real file upload (#9) — stores the actual bytes for the OCR/LLM extractor.
+  async function uploadFile(doc: string, file: File) {
+    try {
+      await api.uploadDocumentFile(appId, doc, file);
+      setUploaded((s) => new Set(s).add(doc));
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
   async function uploadAll() {
     const next = new Set(uploaded);
     try {
@@ -182,9 +192,9 @@ export function DetailsForm({
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               Documents ({uploaded.size}/{REQUIRED_DOCUMENTS.length})
             </div>
-            {uploaded.size < REQUIRED_DOCUMENTS.length && (
+            {prefill && uploaded.size < REQUIRED_DOCUMENTS.length && (
               <button onClick={uploadAll} className="text-xs text-brand hover:underline font-medium">
-                Attach all
+                Attach samples (demo)
               </button>
             )}
           </div>
@@ -195,7 +205,18 @@ export function DetailsForm({
                 {uploaded.has(doc) ? (
                   <span className="text-emerald-600 font-medium">✓ uploaded</span>
                 ) : (
-                  <button onClick={() => upload(doc)} className="text-brand hover:underline">Upload</button>
+                  <label className="text-brand hover:underline cursor-pointer">
+                    Choose file
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) uploadFile(doc, f);
+                      }}
+                    />
+                  </label>
                 )}
               </li>
             ))}

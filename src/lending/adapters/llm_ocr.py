@@ -326,6 +326,25 @@ def downscale_image(data: bytes, mime_type: str, *, max_side: int = 1600, qualit
         return data, mime_type
 
 
+def make_store_loader(document_store, *, max_side: int = 1600) -> LoadDocument:
+    """Bridge the document store (#9 Phase A) to the extractor: load the stored
+    bytes for (application_id, doc_type) into a Document — extracting the PDF text
+    layer for provenance and downscaling oversized images. Used to wire the live
+    extractor into the worker (Phase C)."""
+
+    def load(application_id: str, doc_type: str) -> Document:
+        stored = document_store.get(application_id, doc_type)
+        if stored is None:
+            raise FileNotFoundError(f"no stored document for {application_id}/{doc_type}")
+        data, mime = stored.data, stored.content_type
+        text = pdf_text(data) if mime == "application/pdf" else None
+        if mime.startswith("image/"):
+            data, mime = downscale_image(data, mime, max_side=max_side)
+        return Document(data=data, mime_type=mime, text=text)
+
+    return load
+
+
 def load_file(path: str, *, max_side: int = 1600) -> Document:
     """Build a Document from a local file (smoke testing against real docs). Images
     are downscaled to `max_side` to speed up the vision call."""
@@ -333,7 +352,7 @@ def load_file(path: str, *, max_side: int = 1600) -> Document:
 
     data = open(path, "rb").read()
     mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
-    text = pdf_text(data)
+    text = pdf_text(data) if mime == "application/pdf" else None
     if mime.startswith("image/"):
         data, mime = downscale_image(data, mime, max_side=max_side)
     return Document(data=data, mime_type=mime, text=text)

@@ -19,6 +19,7 @@ dependencies = [
     "google-genai>=0.3",
     "pymupdf>=1.24",        # PDF text layer — provenance + digital-first extraction (#9)
     "pillow>=10",           # image downscaling before vision extraction (#9)
+    "python-multipart>=0.0.9",  # FastAPI file uploads (#9, Phase A)
 ]
 
 [project.optional-dependencies]

@@ -22,7 +22,7 @@ from __future__ import annotations
 import inspect
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from lending.audit import AuditStore
@@ -106,11 +106,16 @@ def create_app(
     workflow_starter=None,
     resolve_signal=None,
     auth_service: AuthService | None = None,
+    document_store=None,
 ) -> FastAPI:
     repo = repository or ApplicationRepository(make_engine())
     audit_store = audit or AuditStore(repo._engine)
     starter = workflow_starter or _default_workflow_starter
     resolver = resolve_signal or _default_resolve_signal
+    if document_store is None:
+        from lending.storage import make_document_store
+
+        document_store = make_document_store()
     if auth_service is None:
         from lending.settings import load_settings
 
@@ -305,6 +310,32 @@ def create_app(
         except ValueError as err:
             raise HTTPException(status_code=400, detail=str(err))
         return {"application_id": application_id, "doc_type": body.doc_type, "uploaded": True}
+
+    @app.post("/applications/{application_id}/documents/file", status_code=201)
+    async def upload_document_file(
+        application_id: str,
+        doc_type: str = Form(...),
+        file: UploadFile = File(...),
+        user: User = Depends(current_user),
+    ) -> dict:
+        """Real file upload (#9, Phase A): store the actual bytes so the OCR/LLM
+        extractor can read them, and register the document's presence with the
+        storage reference."""
+        from lending.agents import register_document
+
+        require_authorized(application_id, user)
+        data = await file.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="empty file")
+        reference = document_store.put(
+            application_id, doc_type, data, file.content_type or "application/octet-stream"
+        )
+        try:
+            register_document(repo, application_id, doc_type, reference=reference)
+        except ValueError as err:
+            raise HTTPException(status_code=400, detail=str(err))
+        return {"application_id": application_id, "doc_type": doc_type,
+                "uploaded": True, "reference": reference, "bytes": len(data)}
 
     @app.post("/applications/{application_id}/start", status_code=202)
     async def start_application(application_id: str, user: User = Depends(current_user)) -> dict:

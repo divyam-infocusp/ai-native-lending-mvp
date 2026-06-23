@@ -142,6 +142,35 @@ def test_upload_unknown_document_type_is_400():
     assert resp.status_code == 400
 
 
+def test_upload_document_file_stores_bytes_and_registers(tmp_path):
+    # real file upload (#9, Phase A): bytes land in the store + presence is recorded
+    from lending.storage import LocalDocumentStore
+
+    engine = make_engine()
+    repo = ApplicationRepository(engine)
+    audit = AuditStore(engine)
+    auth = AuthService(engine, "test-secret")
+    _appl, token = auth.register("a@example.com", "pw", "A", "applicant")
+    store = LocalDocumentStore(str(tmp_path))
+    app = create_app(repo, audit=audit, auth_service=auth,
+                     workflow_starter=lambda i: i, document_store=store)
+    client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
+    app_id = client.post("/applications", json={"applicant": {"full_name": "A"}}).json()["application_id"]
+
+    resp = client.post(
+        f"/applications/{app_id}/documents/file",
+        data={"doc_type": "salary_slips"},
+        files={"file": ("slip.pdf", b"PDFBYTES", "application/pdf")},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["bytes"] == 8
+    # bytes are retrievable by the worker via the same store
+    assert store.get(app_id, "salary_slips").data == b"PDFBYTES"
+    # presence registered, pointing at the stored reference
+    doc = repo.get(app_id).features["documents"]["salary_slips"]
+    assert doc["uploaded"] is True and doc["reference"].startswith("file://")
+
+
 # ---------------------------------------------------------------------------
 # Start workflow
 # ---------------------------------------------------------------------------

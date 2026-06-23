@@ -57,11 +57,13 @@ services:
       ADAPTER_MODE: mock
       PILOT_ENABLED: "true"
       AUTH_SECRET: ${AUTH_SECRET:-dev-secret-change-me}   # bearer-token signing (#38)
+      DOC_STORE_DIR: /data/docstore                       # uploaded document bytes (#9)
       # Gemini (Onboarding Copilot via POST /onboarding/message) — from host env / .env.
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       MODEL_NAME: ${MODEL_NAME:-gemini-3-flash-preview}
       MODEL_NAME_LITE: ${MODEL_NAME_LITE:-gemini-3.1-flash-lite-preview}
     ports: ["${API_PORT:-8000}:8000"]
+    volumes: ["docstore:/data/docstore"]                  # shared with the worker
     command: ["uvicorn", "lending.los.asgi:app", "--host", "0.0.0.0", "--port", "8000"]
 
   worker:
@@ -76,10 +78,12 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       ADAPTER_MODE: mock
       PILOT_ENABLED: "true"
+      DOC_STORE_DIR: /data/docstore                       # read uploaded docs (#9)
       # Gemini (agents) — sourced from the host env / .env; defaults match the code.
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       MODEL_NAME: ${MODEL_NAME:-gemini-3-flash-preview}
       MODEL_NAME_LITE: ${MODEL_NAME_LITE:-gemini-3.1-flash-lite-preview}
+    volumes: ["docstore:/data/docstore"]                  # shared with the api
     command: ["python", "-m", "lending.workflow.worker"]
     restart: on-failure
 
@@ -92,3 +96,4 @@ services:
 
 volumes:
   pgdata:
+  docstore:        # uploaded document bytes shared between api (write) + worker (read) (#9)

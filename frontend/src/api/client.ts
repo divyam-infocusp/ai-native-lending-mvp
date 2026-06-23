@@ -171,6 +171,25 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ doc_type: docType, reference }),
     }),
+  // Real file upload (#9, Phase A) — multipart, so bypass the JSON `req` helper
+  // (the browser sets the multipart boundary; we must not force Content-Type).
+  uploadDocumentFile: async (id: string, docType: string, file: File) => {
+    const form = new FormData();
+    form.append("doc_type", docType);
+    form.append("file", file);
+    const token = tokenStore.get();
+    const res = await fetch(`${BASE}/applications/${id}/documents/file`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try { detail = (await res.json()).detail ?? detail; } catch { /* non-JSON */ }
+      throw new Error(detail);
+    }
+    return res.json();
+  },
   startWorkflow: (id: string) =>
     req<{ workflow_run: string; status: string }>(`/applications/${id}/start`, { method: "POST" }),
   getAudit: (id: string) =>
