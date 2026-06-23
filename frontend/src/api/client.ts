@@ -114,8 +114,8 @@ export interface PolicyView {
 }
 
 export const REQUIRED_DOCUMENTS = [
-  "identity_proof",
-  "address_proof",
+  "aadhaar_card",
+  "pan_card",
   "salary_slips",
   "form16",
 ] as const;
@@ -190,6 +190,21 @@ export const api = {
       throw new Error(detail);
     }
     return res.json();
+  },
+  // Fetch a stored document as a Blob (auth header required — can't use a plain URL).
+  // Caller should URL.createObjectURL() the blob for display, and revoke when done.
+  getDocumentFile: async (id: string, docType: string): Promise<{ blob: Blob; contentType: string }> => {
+    const token = tokenStore.get();
+    const res = await fetch(`${BASE}/applications/${id}/documents/${docType}/file`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try { detail = (await res.json()).detail ?? detail; } catch { /* non-JSON */ }
+      throw new Error(detail);
+    }
+    const blob = await res.blob();
+    return { blob, contentType: res.headers.get("Content-Type") ?? "application/octet-stream" };
   },
   startWorkflow: (id: string) =>
     req<{ workflow_run: string; status: string }>(`/applications/${id}/start`, { method: "POST" }),

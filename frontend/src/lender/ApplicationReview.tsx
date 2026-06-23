@@ -1,10 +1,77 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, Application } from "../api/client";
 import { Card, Pill, Spinner, ErrorNote, stateTone } from "../components/ui";
 import { RESOLUTIONS, ResolveAction, isParked } from "./resolve";
 
 const inr = (n: any) => (n === undefined || n === null || n === "" ? "—" : `₹${Number(n).toLocaleString("en-IN")}`);
+
+// --- Document viewer modal ---------------------------------------------------
+
+function DocViewerModal({
+  appId,
+  docType,
+  onClose,
+}: {
+  appId: string;
+  docType: string;
+  onClose: () => void;
+}) {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [contentType, setContentType] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+  const urlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    api.getDocumentFile(appId, docType)
+      .then(({ blob, contentType: ct }) => {
+        const url = URL.createObjectURL(blob);
+        urlRef.current = url;
+        setObjectUrl(url);
+        setContentType(ct);
+      })
+      .catch((e) => setError(e.message));
+    return () => {
+      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+    };
+  }, [appId, docType]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+        style={{ width: "min(720px, 95vw)", maxHeight: "90vh" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
+          <span className="font-semibold text-slate-800 capitalize">{docType.replace(/_/g, " ")}</span>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-xl leading-none">×</button>
+        </div>
+        <div className="flex-1 overflow-auto min-h-0">
+          {error && <div className="p-6"><ErrorNote>{error}</ErrorNote></div>}
+          {!objectUrl && !error && (
+            <div className="p-8 grid place-items-center"><Spinner label="Loading document…" /></div>
+          )}
+          {objectUrl && contentType.startsWith("image/") && (
+            <img src={objectUrl} alt={docType} className="max-w-full h-auto block mx-auto p-4" />
+          )}
+          {objectUrl && contentType === "application/pdf" && (
+            <iframe src={objectUrl} title={docType} className="w-full h-full" style={{ minHeight: "60vh" }} />
+          )}
+          {objectUrl && !contentType.startsWith("image/") && contentType !== "application/pdf" && (
+            <div className="p-6 text-center">
+              <p className="text-slate-500 mb-4 text-sm">Preview not available for {contentType}.</p>
+              <a href={objectUrl} download={docType} className="btn-primary">Download</a>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 const txt = (v: any) => (v === undefined || v === null || v === "" ? "—" : String(v));
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
@@ -12,6 +79,62 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
     <div className="flex items-start justify-between gap-3 py-1.5 border-b border-slate-50 last:border-0">
       <dt className="text-sm text-slate-500">{label}</dt>
       <dd className="text-sm text-slate-800 font-medium text-right break-words">{value}</dd>
+    </div>
+  );
+}
+
+// Mirrors doc_compare.py — same normalisation strategy per semantic type.
+// Keeps UI mismatch detection consistent with the backend cross-check logic.
+type CompareType = "id" | "date" | "name" | "text";
+
+const normId   = (v: string) => v.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+const normText = (v: string) => v.replace(/[^A-Za-z0-9 ]/g, " ").replace(/\s+/g, " ").trim().toUpperCase();
+const normName = (v: string) => normText(v).split(" ").filter(Boolean).sort().join(" ");
+function normDate(v: string) {
+  const d = (v ?? "").match(/\d+/g) ?? [];
+  if (d.length === 3) {
+    const [a, b, c] = d;
+    if (a.length === 4) return `${a}${b.padStart(2,"0")}${c.padStart(2,"0")}`;  // YYYY-MM-DD
+    if (c.length === 4) return `${c}${b.padStart(2,"0")}${a.padStart(2,"0")}`;  // DD/MM/YYYY
+  }
+  return d.join("");
+}
+function isSameValue(a: string, b: string, type: CompareType): boolean {
+  if (!a || !b) return false;
+  switch (type) {
+    case "id":   return normId(a)   === normId(b);
+    case "date": return normDate(a) === normDate(b);
+    case "name": return normName(a) === normName(b);
+    default:     return normText(a) === normText(b);
+  }
+}
+
+// A field where the applicant's entered value is shown alongside what the documents
+// extracted. Only shows red when the values genuinely differ after type-aware
+// normalisation (mirrors doc_compare.py so "14/08/1990" ≡ "1990-08-14", spaces in
+// Aadhaar are ignored, case/punctuation differences in names don't false-flag).
+function ClaimField({
+  label, claimed, documented, fmt, compareType = "text",
+}: {
+  label: string; claimed: any; documented: any;
+  fmt?: (v: any) => string; compareType?: CompareType;
+}) {
+  const format = fmt ?? txt;
+  const claim = format(claimed);
+  const doc = documented === undefined || documented === null || documented === "" ? null : format(documented);
+  const mismatch = doc !== null && claim !== "—" &&
+    !isSameValue(String(claimed ?? ""), String(documented ?? ""), compareType);
+  return (
+    <div className="flex items-start justify-between gap-3 py-1.5 border-b border-slate-50 last:border-0">
+      <dt className="text-sm text-slate-500">{label}</dt>
+      <dd className="text-sm text-right break-words">
+        <span className="text-slate-800 font-medium">{claim}</span>
+        {mismatch && (
+          <span className="block text-[11px] text-rose-600 mt-0.5">
+            ⚠ docs: {doc} <span className="text-rose-400">(mismatch)</span>
+          </span>
+        )}
+      </dd>
     </div>
   );
 }
@@ -84,6 +207,7 @@ export function ApplicationReview() {
   const { id } = useParams();
   const [app, setApp] = useState<Application | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [viewingDoc, setViewingDoc] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -93,10 +217,14 @@ export function ApplicationReview() {
   if (error) return <div className="max-w-2xl mx-auto"><ErrorNote>{error}</ErrorNote></div>;
   if (!app) return <div className="card p-8 grid place-items-center"><Spinner label="Loading case…" /></div>;
 
+  const appId = app.application_id;
+
   const a = app.applicant ?? ({} as any);
   const f = app.features ?? {};
   const val = (k: string) => (a as any)[k] ?? f[k];     // field may live on applicant or features
   const docs: Record<string, any> = f.documents ?? {};
+  const di: Record<string, any> = f.documented_identity ?? {};   // identity: what docs read vs claim
+  const st: Record<string, any> = f.applicant_stated ?? {};      // financials: what applicant stated vs docs
   const uw = f.underwriting_summary;
   const offer = f.offer_letter;
   const decision = app.decision;
@@ -105,6 +233,9 @@ export function ApplicationReview() {
 
   return (
     <div className="space-y-5">
+      {viewingDoc && (
+        <DocViewerModal appId={appId} docType={viewingDoc} onClose={() => setViewingDoc(null)} />
+      )}
       <div className="flex items-start justify-between">
         <div>
           <Link to={`/pipeline/${id}`} className="text-sm text-brand hover:underline">← Case detail</Link>
@@ -121,26 +252,34 @@ export function ApplicationReview() {
         {/* Left: who they are + what they asked for */}
         <div className="space-y-5">
           <Card title="Applicant">
+            <p className="text-xs text-slate-400 mb-2">
+              Values as entered by the applicant. Where the uploaded documents read something
+              different, the document value is shown below in red — these route the case to KYC review.
+            </p>
             <dl>
-              <Field label="Full name" value={txt(a.full_name)} />
-              <Field label="PAN" value={txt(a.pan)} />
-              <Field label="Aadhaar" value={txt(a.aadhaar)} />
-              <Field label="Date of birth" value={txt(a.date_of_birth)} />
+              <ClaimField label="Full name"     claimed={a.full_name}       documented={di.name}         compareType="name" />
+              <ClaimField label="PAN"           claimed={a.pan}             documented={di.pan}          compareType="id" />
+              <ClaimField label="Aadhaar"       claimed={a.aadhaar}         documented={di.aadhaar}      compareType="id" />
+              <ClaimField label="Date of birth" claimed={a.date_of_birth}   documented={di.date_of_birth} compareType="date" />
               <Field label="Mobile" value={txt(a.mobile)} />
-              <Field label="Email" value={txt(a.email)} />
-              <Field label="Address" value={txt(a.current_address)} />
+              <Field label="Email"  value={txt(a.email)} />
+              <ClaimField label="Address"       claimed={a.current_address} documented={di.address}      compareType="text" />
             </dl>
           </Card>
 
           <Card title="Employment & loan request">
+            <p className="text-xs text-slate-400 mb-2">
+              Values as entered by the applicant. Where documents extracted a different
+              value, the document reading is shown in red below.
+            </p>
             <dl>
-              <Field label="Employment type" value={txt(val("employment_type"))} />
-              <Field label="Employer" value={txt(val("employer_name"))} />
-              <Field label="Tenure (months)" value={txt(val("employment_tenure_months"))} />
-              <Field label="Monthly income" value={inr(val("monthly_income"))} />
-              <Field label="Loan requested" value={inr(val("loan_amount_requested"))} />
-              <Field label="Loan tenure (months)" value={txt(val("loan_tenure_months"))} />
-              <Field label="Purpose" value={txt(val("loan_purpose"))} />
+              <ClaimField label="Employment type"  claimed={st.employment_type ?? val("employment_type")} documented={f.employment_type !== st.employment_type ? f.employment_type : undefined} compareType="text" />
+              <ClaimField label="Employer"         claimed={st.employer_name ?? val("employer_name")} documented={f.employer_name !== st.employer_name ? f.employer_name : undefined} compareType="name" />
+              <ClaimField label="Tenure (months)"  claimed={st.employment_tenure_months ?? val("employment_tenure_months")} documented={f.employment_tenure_months !== st.employment_tenure_months ? f.employment_tenure_months : undefined} compareType="text" />
+              <ClaimField label="Monthly income"   claimed={st.monthly_income ?? val("monthly_income")} documented={f.monthly_income !== st.monthly_income ? f.monthly_income : undefined} fmt={inr} compareType="text" />
+              <Field label="Loan requested"        value={inr(val("loan_amount_requested"))} />
+              <Field label="Loan tenure (months)"  value={txt(val("loan_tenure_months"))} />
+              <Field label="Purpose"               value={txt(val("loan_purpose"))} />
             </dl>
           </Card>
 
@@ -152,9 +291,19 @@ export function ApplicationReview() {
                 {Object.entries(docs).map(([name, rec]) => {
                   const t = docTone(rec?.verified);
                   return (
-                    <li key={name} className="flex items-center justify-between text-sm">
-                      <span className="text-slate-700">{name.replace(/_/g, " ")}</span>
-                      <Pill tone={t.tone}>{rec?.uploaded ? t.text : "Not uploaded"}</Pill>
+                    <li key={name} className="flex items-center justify-between text-sm gap-2">
+                      <span className="text-slate-700 capitalize">{name.replace(/_/g, " ")}</span>
+                      <span className="flex items-center gap-2">
+                        {rec?.uploaded && rec?.reference?.startsWith("file://") && (
+                          <button
+                            onClick={() => setViewingDoc(name)}
+                            className="text-brand hover:underline text-xs font-medium"
+                          >
+                            View
+                          </button>
+                        )}
+                        <Pill tone={t.tone}>{rec?.uploaded ? t.text : "Not uploaded"}</Pill>
+                      </span>
                     </li>
                   );
                 })}

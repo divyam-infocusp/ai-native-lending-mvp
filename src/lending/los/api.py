@@ -22,7 +22,7 @@ from __future__ import annotations
 import inspect
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 
 from lending.audit import AuditStore
@@ -336,6 +336,28 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(err))
         return {"application_id": application_id, "doc_type": doc_type,
                 "uploaded": True, "reference": reference, "bytes": len(data)}
+
+    @app.get("/applications/{application_id}/documents/{doc_type}/file")
+    async def get_document_file(
+        application_id: str,
+        doc_type: str,
+        user: User = Depends(current_user),
+    ) -> Response:
+        """Serve the uploaded document bytes for underwriter review (#19).
+
+        Only the application owner (applicant) or any underwriter can fetch
+        documents — the same `require_authorized` gate as other read paths.
+        Returns the raw bytes with the stored content-type so the browser can
+        render PDFs inline and display images directly."""
+        require_authorized(application_id, user)
+        stored = document_store.get(application_id, doc_type)
+        if stored is None:
+            raise HTTPException(status_code=404, detail="document not found or not yet uploaded")
+        return Response(
+            content=stored.data,
+            media_type=stored.content_type,
+            headers={"Content-Disposition": f'inline; filename="{doc_type}"'},
+        )
 
     @app.post("/applications/{application_id}/start", status_code=202)
     async def start_application(application_id: str, user: User = Depends(current_user)) -> dict:
