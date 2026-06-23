@@ -31,3 +31,4 @@ htmlcov/
 node_modules/
 dist-ssr/
 *.log
+src/lending/test_data/

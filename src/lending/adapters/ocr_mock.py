@@ -90,10 +90,21 @@ def _valid_aadhaar(value) -> str:
 
 def make_reflective_ocr_extractor(repository):
     """Build an extractor that echoes the application's own data as the extracted
-    fields (same values across documents, so cross-checks agree)."""
+    fields (same values across documents, so cross-checks agree).
+
+    The application is fetched once and cached under a lock: documents are now
+    extracted concurrently (#9), and the test SQLite engine shares a single
+    connection (StaticPool) that can't take simultaneous reads."""
+    import threading
+
+    _lock = threading.Lock()
+    _cache: dict = {}
 
     def extract(application_id: str, doc_type: str) -> dict:
-        app = repository.get(application_id)
+        with _lock:
+            if application_id not in _cache:
+                _cache[application_id] = repository.get(application_id)
+        app = _cache[application_id]
         applicant = getattr(app, "applicant", None)
         feats = (getattr(app, "features", None) or {}) if app else {}
 

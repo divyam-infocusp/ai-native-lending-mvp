@@ -124,16 +124,27 @@ def make_ocr_extractor(harness, *, provider: str = "ocr") -> ExtractFn:
 # ---------------------------------------------------------------------------
 
 def _extract_all(application_id: str, doc_types: list[str], extract: ExtractFn) -> dict:
-    """{doc_type: {field: {"value", "ocr_conf"}}} for every uploaded document."""
-    out: dict[str, dict] = {}
-    for doc_type in doc_types:
+    """{doc_type: {field: {"value", "ocr_conf"}}} for every uploaded document.
+
+    Documents are extracted concurrently: extraction is network/IO-bound (an OCR
+    or LLM call per doc), so a thread pool collapses the total to ~the slowest
+    single document instead of the sum. Order-independent — results are keyed by
+    doc_type."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(doc_type: str) -> tuple[str, dict]:
         extracted = extract(application_id, doc_type) or {}
-        # keep only fields that actually carry a non-empty value
-        out[doc_type] = {
+        kept = {
             f: rec for f, rec in extracted.items()
             if f not in _METADATA_FIELDS and rec and rec.get("value") not in (None, "")
         }
-    return out
+        return doc_type, kept
+
+    if len(doc_types) <= 1:
+        return dict(one(d) for d in doc_types)
+
+    with ThreadPoolExecutor(max_workers=min(8, len(doc_types))) as pool:
+        return dict(pool.map(one, doc_types))
 
 
 def _sources_by_field(extractions: dict) -> dict:
