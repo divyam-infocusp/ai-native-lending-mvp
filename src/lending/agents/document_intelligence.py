@@ -205,29 +205,59 @@ def _payslip_flags(extractions: dict, *, policy_version: str) -> list[RiskFlag]:
     return flags
 
 
-def score_profile(extractions: dict, *, policy_version: str = "v1") -> tuple:
+# Canonical fields the applicant self-reports on the form that we can corroborate
+# against the documents (identity fields with a type-aware comparison).
+_CLAIMABLE_FIELDS = frozenset({"name", "pan", "aadhaar", "date_of_birth"})
+
+
+def _claimed_cross_checks(profile: dict, claimed: dict | None, *, policy_version: str) -> list[CrossSourceCheck]:
+    """The applicant's self-reported identity values as an extra cross-source.
+
+    They never win value selection (documents stay authoritative) and don't affect
+    OCR confidence — but a claimed-vs-documented disagreement is recorded as a
+    CrossSourceCheck (source `applicant_form`), so it lowers that field's confidence
+    and can gate to KYC_EXCEPTION. Catches typos, a wrong PAN/Aadhaar, or an
+    applicant uploading someone else's documents."""
+    checks: list[CrossSourceCheck] = []
+    for f, claimed_value in (claimed or {}).items():
+        if f in _CLAIMABLE_FIELDS and f in profile and claimed_value not in (None, ""):
+            matches = values_match(f, claimed_value, profile[f], policy_version=policy_version)
+            checks.append(CrossSourceCheck(
+                field_name=f, source_a="applicant_form", source_b="documents", matches=matches))
+    return checks
+
+
+def score_profile(extractions: dict, *, policy_version: str = "v1", claimed: dict | None = None) -> tuple:
     """Compute the verified profile + per-field grounded confidence.
 
     Returns (profile, field_results, cross_checks). Per-field confidence uses the
     *minimum* OCR confidence across the sources that reported the field (the
     worst read should flag LOW_OCR), the cross-checks for that field, and any
-    format validator. Payslip obvious-fake flags attach to income fields."""
+    format validator. The applicant's `claimed` form values are folded in as an
+    extra cross-source (claimed-vs-documented). Payslip obvious-fake flags attach
+    to income fields."""
     cross_checks = build_cross_checks(extractions, policy_version=policy_version)
     by_field = _sources_by_field(extractions)
     payslip_flags = _payslip_flags(extractions, policy_version=policy_version)
 
+    # Pass 1: documented value + its OCR confidence per field (documents only;
+    # the form is never allowed to win the stored value).
     profile: dict = {}
-    field_results: dict = {}
+    ocr_by_field: dict = {}
     for f, sources in by_field.items():
-        value, _ = _choose_value(sources)
-        profile[f] = value
+        profile[f], _ = _choose_value(sources)
+        ocr_by_field[f] = min(s[1].get("ocr_conf", 0.0) for s in sources)
 
-        ocr_conf = min(s[1].get("ocr_conf", 0.0) for s in sources)
+    # The applicant's claimed identity fields join as an extra cross-source.
+    cross_checks.extend(_claimed_cross_checks(profile, claimed, policy_version=policy_version))
+
+    # Pass 2: grounded per-field confidence using all cross-checks (doc + form).
+    field_results: dict = {}
+    for f in by_field:
         field_checks = [c for c in cross_checks if c.field_name == f]
-        validators = [_VALIDATORS[f](value)] if f in _VALIDATORS else []
-
+        validators = [_VALIDATORS[f](profile[f])] if f in _VALIDATORS else []
         result = field_confidence(
-            ocr_conf=ocr_conf,
+            ocr_conf=ocr_by_field[f],
             cross_source_checks=field_checks,
             validators=validators,
             policy_version=policy_version,
@@ -244,12 +274,16 @@ def score_profile(extractions: dict, *, policy_version: str = "v1") -> tuple:
     return profile, field_results, cross_checks
 
 
-def evaluate(extractions: dict, *, key_fields=None, policy_version: str = "v1") -> DocIntelResult:
+def evaluate(extractions: dict, *, key_fields=None, policy_version: str = "v1",
+             claimed: dict | None = None) -> DocIntelResult:
     """Full deterministic evaluation → verified or exception, with reasons. Key
-    fields default to the versioned policy; pass `key_fields` only to override."""
+    fields default to the versioned policy; pass `key_fields` only to override.
+    `claimed` (the applicant's self-reported identity fields) is cross-checked
+    against the documents."""
     if key_fields is None:
         key_fields = key_fields_for(policy_version)
-    profile, field_results, cross_checks = score_profile(extractions, policy_version=policy_version)
+    profile, field_results, cross_checks = score_profile(
+        extractions, policy_version=policy_version, claimed=claimed)
 
     reasons: list[str] = []
     for kf in key_fields:
@@ -311,8 +345,20 @@ def verify_documents(
     if not uploaded:
         raise ValueError(f"no uploaded documents to verify for {application_id!r}")
 
+    # The applicant's self-reported identity fields (from onboarding/form), captured
+    # BEFORE the documented profile overwrites them — so we can corroborate what was
+    # claimed against what the documents actually show.
+    applicant = application.applicant
+    claimed = {
+        "name": getattr(applicant, "full_name", None),
+        "pan": getattr(applicant, "pan", None),
+        "aadhaar": getattr(applicant, "aadhaar", None),
+        "date_of_birth": getattr(applicant, "date_of_birth", None),
+    }
+    claimed = {k: v for k, v in claimed.items() if v not in (None, "")}
+
     extractions = _extract_all(application_id, uploaded, extract)
-    result = evaluate(extractions, key_fields=key_fields, policy_version=policy_version)
+    result = evaluate(extractions, key_fields=key_fields, policy_version=policy_version, claimed=claimed)
 
     # --- Persist the verified profile back onto the application ---
     feats = dict(application.features or {})

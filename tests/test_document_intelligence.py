@@ -298,6 +298,37 @@ def test_verify_documents_low_confidence_routes_to_kyc_exception():
     assert events[0].payload["exception_reasons"]
 
 
+def test_claimed_pan_mismatch_routes_to_kyc_exception():
+    # applicant typed a PAN that disagrees with the document → claimed-vs-documented
+    # mismatch on a key field → KYC_EXCEPTION (#claimed-cross-check).
+    repo, audit = _stores()
+    ext = _clean_extractions()                       # documents say PAN ABCDE1234F
+    app = Application(applicant=Applicant(full_name="Priya Sharma", pan="ZZZZZ9999Z"))
+    app.features = {"documents": {d: {"uploaded": True, "verified": None} for d in ext.keys()}}
+    repo.save(app)
+
+    result = verify_documents(repo, audit, app.application_id, extract=_fake_extract(ext))
+    assert result.status == "exception"
+    assert any(r.startswith("cross_source_mismatch:pan") and "applicant_form" in r
+               for r in result.exception_reasons)
+
+
+def test_claimed_values_matching_documents_stay_verified():
+    repo, audit = _stores()
+    ext = _clean_extractions()
+    app = Application(applicant=Applicant(
+        full_name="Priya Sharma", pan="ABCDE1234F", aadhaar=VALID_AADHAAR))
+    app.features = {"documents": {d: {"uploaded": True, "verified": None} for d in ext.keys()}}
+    repo.save(app)
+
+    result = verify_documents(repo, audit, app.application_id, extract=_fake_extract(ext))
+    assert result.status == "verified"
+    # the claimed-vs-documents cross-checks are recorded + matched in the audit
+    ev = [e for e in audit.reconstruct(app.application_id) if e.event_type == "agent_reasoning"][0]
+    form_checks = [c for c in ev.payload["cross_checks"] if c["source_a"] == "applicant_form"]
+    assert form_checks and all(c["matches"] for c in form_checks)
+
+
 def test_verify_documents_requires_uploaded_documents():
     repo, audit = _stores()
     app = Application(applicant=Applicant(full_name="Priya"))
