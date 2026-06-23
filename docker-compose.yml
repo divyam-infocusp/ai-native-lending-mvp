@@ -54,7 +54,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://lending:lending@postgres:5432/lending
       TEMPORAL_ADDRESS: temporal:7233          # POST /applications/{id}/start
-      ADAPTER_MODE: ${ADAPTER_MODE:-mock}
+      ADAPTER_MODE: mock
       PILOT_ENABLED: "true"
       AUTH_SECRET: ${AUTH_SECRET:-dev-secret-change-me}   # bearer-token signing (#38)
       DOC_STORE_DIR: /data/docstore                       # uploaded document bytes (#9)
@@ -76,7 +76,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://lending:lending@postgres:5432/lending
       TEMPORAL_ADDRESS: temporal:7233
-      ADAPTER_MODE: ${ADAPTER_MODE:-mock}
+      ADAPTER_MODE: mock
       PILOT_ENABLED: "true"
       DOC_STORE_DIR: /data/docstore                       # read uploaded docs (#9)
       # Gemini (agents) — sourced from the host env / .env; defaults match the code.

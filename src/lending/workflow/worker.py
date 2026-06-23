@@ -24,28 +24,36 @@ from .workflow import TASK_QUEUE, LoanOriginationWorkflow
 def build_doc_extractor(adapter_mode: str, repository):
     """Document extractor (OCR/KYC) for the Document Intelligence Agent (#19).
 
-    `mock` → a reflective extractor that derives the "OCR" fields from the
-    application's own data (so the verified profile matches the real applicant);
-    `live` → the LLM extractor (#9): reads the uploaded file bytes from the document
-    store and extracts fields with Gemini (grounded confidence). Needs GOOGLE_API_KEY
-    and real uploaded documents."""
-    if adapter_mode == "live":
-        from lending.adapters.llm_ocr import (
-            gemini_vision_pass,
-            make_llm_extractor,
-            make_store_loader,
-        )
-        from lending.agents.llm import model_lite
-        from lending.storage import make_document_store
-
-        return make_llm_extractor(
-            make_store_loader(make_document_store()),
-            gemini_vision_pass(model=model_lite()),   # lite + downscale ≈ 2.3s/doc
-            samples=3,                                  # self-consistency (run in parallel per doc)
-        )
+    Auto-detecting, no env toggle: if a *real file* was uploaded (bytes present in
+    the document store), extract it with the LLM (#9, grounded confidence); if it's
+    a synthetic/mock upload with no stored bytes (the demo scenarios), fall back to
+    the reflective mock. So real OCR is the default for real documents while the
+    mock demo keeps working. `adapter_mode` is kept for signature symmetry but no
+    longer gates the doc path (the LLM call needs GOOGLE_API_KEY, used only when a
+    real file is actually present)."""
+    from lending.adapters.llm_ocr import (
+        gemini_vision_pass,
+        make_llm_extractor,
+        make_store_loader,
+    )
     from lending.adapters.ocr_mock import make_reflective_ocr_extractor
+    from lending.agents.llm import model_lite
+    from lending.storage import make_document_store
 
-    return make_reflective_ocr_extractor(repository)
+    store = make_document_store()
+    reflective = make_reflective_ocr_extractor(repository)
+    llm = make_llm_extractor(
+        make_store_loader(store),
+        gemini_vision_pass(model=model_lite()),   # lite + downscale ≈ 2.3s/doc
+        samples=3,                                  # self-consistency (run in parallel per doc)
+    )
+
+    def extract(application_id: str, doc_type: str) -> dict:
+        if store.get(application_id, doc_type) is not None:   # a real file was uploaded
+            return llm(application_id, doc_type)
+        return reflective(application_id, doc_type)           # mock / demo-scenario upload
+
+    return extract
 
 
 def build_bureau_harness(adapter_mode: str, repository):
