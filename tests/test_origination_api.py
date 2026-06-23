@@ -62,7 +62,7 @@ def _complete(client, app_id) -> None:
         "employment_tenure_months": "48", "monthly_income": "85000",
         "loan_amount_requested": "300000", "loan_tenure_months": "36", "loan_purpose": "renovation",
     }})
-    for d in ("identity_proof", "address_proof", "salary_slips", "bank_statement", "form16"):
+    for d in ("identity_proof", "address_proof", "salary_slips", "form16"):
         client.post(f"/applications/{app_id}/documents", json={"doc_type": d})
 
 

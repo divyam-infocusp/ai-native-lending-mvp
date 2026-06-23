@@ -46,6 +46,21 @@ def test_store_loader_reads_pdf(tmp_path):
     assert doc.data  # bytes present (text layer may be None for a non-parseable PDF)
 
 
+def test_store_loader_feeds_extractor(tmp_path):
+    # the live wiring chain: stored bytes → loader → extractor → grounded fields
+    from lending.adapters.llm_ocr import make_llm_extractor
+
+    store = LocalDocumentStore(str(tmp_path))
+    store.put("app1", "address_proof", b"%PDF-1.4 PAN ABCDE1234F", "application/pdf")
+
+    def fake_pass(_doc, _doc_type, _fields):
+        return [{"field": "pan", "value": "ABCDE1234F", "source_quote": "PAN ABCDE1234F"}]
+
+    extract = make_llm_extractor(make_store_loader(store), fake_pass, samples=2)
+    out = extract("app1", "address_proof")
+    assert out["pan"]["value"] == "ABCDE1234F"
+
+
 def test_store_loader_handles_image(tmp_path):
     from PIL import Image
 

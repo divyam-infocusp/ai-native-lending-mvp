@@ -52,8 +52,10 @@ REQUIRED_DOCUMENTS = [
     "identity_proof",     # Aadhaar/PAN/Passport/DL
     "address_proof",      # utility bill / Aadhaar / passport
     "salary_slips",       # last 2-3 months
-    "bank_statement",     # 2-3 months, showing salary credits
     "form16",             # or ITR, previous year
+    # bank_statement intentionally excluded — its real value is transaction
+    # time-series analysis (continuity / obligations), tracked separately in #53.
+    # The doc type still works in the agent if uploaded; it's just not required.
 ]
 
 _APPLICANT_FIELDS = {"full_name", "pan", "aadhaar", "date_of_birth", "mobile", "email", "current_address"}

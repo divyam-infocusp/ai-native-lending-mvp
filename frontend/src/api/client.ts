@@ -117,11 +117,12 @@ export const REQUIRED_DOCUMENTS = [
   "identity_proof",
   "address_proof",
   "salary_slips",
-  "bank_statement",
   "form16",
 ] as const;
 
 export const BUREAU_PULL_PURPOSE = "bureau_pull";
+// Authorization to process uploaded documents with AI/LLM (DPDP) — #9.
+export const DOC_AI_PURPOSE = "document_ai_processing";
 
 // ---- Endpoints -----------------------------------------------------------
 

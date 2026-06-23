@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, BUREAU_PULL_PURPOSE, REQUIRED_DOCUMENTS } from "../api/client";
+import { api, BUREAU_PULL_PURPOSE, DOC_AI_PURPOSE, REQUIRED_DOCUMENTS } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { Spinner, ErrorNote } from "../components/ui";
 import { DetailsForm } from "./DetailsForm";
@@ -127,6 +127,7 @@ export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
     setBusy(true);
     try {
       await api.captureConsent(appId, BUREAU_PULL_PURPOSE);
+      await api.captureConsent(appId, DOC_AI_PURPOSE);   // authorize AI document processing (#9)
       await api.startWorkflow(appId);
       navigate(`/apply/${appId}`);   // → tracked status page (#40)
     } catch (e) {
@@ -261,8 +262,9 @@ export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
         <Panel>
           <h1 className="text-lg font-semibold text-slate-900">One last thing — your consent</h1>
           <p className="text-slate-500 mt-1.5">
-            To assess your application we need your authorization to check your credit bureau record.
-            We mint a fresh, auditable consent record at the moment of the check.
+            To assess your application we need your authorization to (a) check your credit bureau
+            record and (b) process your uploaded documents to verify your details. We mint a fresh,
+            auditable consent record for each.
           </p>
           <button onClick={authorizeAndSubmit} disabled={busy} className="btn-primary mt-6">
             {busy ? "Submitting…" : "Authorize & submit application"}

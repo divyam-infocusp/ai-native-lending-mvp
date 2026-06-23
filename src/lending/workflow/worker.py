@@ -26,9 +26,23 @@ def build_doc_extractor(adapter_mode: str, repository):
 
     `mock` → a reflective extractor that derives the "OCR" fields from the
     application's own data (so the verified profile matches the real applicant);
-    `live` → the real OCR/KYC adapters, which arrive in #9 (not built yet)."""
+    `live` → the LLM extractor (#9): reads the uploaded file bytes from the document
+    store and extracts fields with Gemini (grounded confidence). Needs GOOGLE_API_KEY
+    and real uploaded documents."""
     if adapter_mode == "live":
-        raise NotImplementedError("live OCR/KYC adapter not built yet (#9); use ADAPTER_MODE=mock")
+        from lending.adapters.llm_ocr import (
+            gemini_vision_pass,
+            make_llm_extractor,
+            make_store_loader,
+        )
+        from lending.agents.llm import model_lite
+        from lending.storage import make_document_store
+
+        return make_llm_extractor(
+            make_store_loader(make_document_store()),
+            gemini_vision_pass(model=model_lite()),   # lite + downscale ≈ 2.3s/doc
+            samples=3,                                  # self-consistency (run in parallel per doc)
+        )
     from lending.adapters.ocr_mock import make_reflective_ocr_extractor
 
     return make_reflective_ocr_extractor(repository)

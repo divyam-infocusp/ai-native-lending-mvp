@@ -348,8 +348,9 @@ def test_worker_build_doc_extractor_mock_vs_live():
     extract = build_doc_extractor("mock", repo)
     # unknown application → valid-format fallbacks (so KYC can still run)
     assert extract("app-1", "identity_proof")["aadhaar"]["value"] == VALID_AADHAAR
-    with pytest.raises(NotImplementedError, match="#9"):
-        build_doc_extractor("live", repo)
+    # live now builds the LLM extractor (#9) instead of raising — it's callable
+    # (it would hit the store + Gemini at call time, which we don't invoke here).
+    assert callable(build_doc_extractor("live", repo))
 
 
 def test_reflective_ocr_echoes_real_applicant_name():
