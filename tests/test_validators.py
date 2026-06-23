@@ -1,12 +1,11 @@
 """
 Isolation tests for identity-field validators (#5).
 
-Covers PAN structure, IFSC structure, and Aadhaar Verhoeff checksum
-(round-trip generation + single-digit corruption detection).
+Covers PAN structure, IFSC structure, and Aadhaar format validation
+(12 digits, spaces stripped — Verhoeff check omitted per policy).
 """
 import pytest
 from lending.confidence import validate_aadhaar, validate_ifsc, validate_pan
-from lending.confidence.validators import _VERHOEFF_D, _VERHOEFF_P
 
 
 # ---------------------------------------------------------------------------
@@ -54,39 +53,16 @@ def test_invalid_ifsc(ifsc):
 
 
 # ---------------------------------------------------------------------------
-# Aadhaar Verhoeff
+# Aadhaar — format-only (12 digits, spaces stripped)
 # ---------------------------------------------------------------------------
 
-def _verhoeff_check_digit(payload_11: str) -> int:
-    """Generate the Verhoeff check digit for an 11-digit payload."""
-    inv = [0, 4, 3, 2, 1, 5, 6, 7, 8, 9]
-    c = 0
-    for i, ch in enumerate(reversed(payload_11)):
-        c = _VERHOEFF_D[c][_VERHOEFF_P[(i + 1) % 8][int(ch)]]
-    return inv[c]
-
-
-def _make_valid_aadhaar(payload_11: str) -> str:
-    return payload_11 + str(_verhoeff_check_digit(payload_11))
-
-
-def test_generated_aadhaar_validates():
-    for payload in ["12345678901", "99887766554", "10000000000"]:
-        aadhaar = _make_valid_aadhaar(payload)
-        assert validate_aadhaar(aadhaar).valid is True, f"{aadhaar} should be valid"
-
-
-def test_single_digit_corruption_fails():
-    aadhaar = _make_valid_aadhaar("12345678901")
-    # Flip the last payload digit → checksum must reject
-    corrupted = aadhaar[:10] + str((int(aadhaar[10]) + 1) % 10) + aadhaar[11]
-    assert validate_aadhaar(corrupted).valid is False
-
-
-def test_wrong_check_digit_fails():
-    aadhaar = _make_valid_aadhaar("12345678901")
-    bad = aadhaar[:11] + str((int(aadhaar[11]) + 1) % 10)
-    assert validate_aadhaar(bad).valid is False
+@pytest.mark.parametrize("value", [
+    "223344556677",        # plain 12 digits
+    "2233 4455 6677",      # LLM-style spaces stripped before check
+    "123456789012",
+])
+def test_valid_aadhaar(value):
+    assert validate_aadhaar(value).valid is True
 
 
 @pytest.mark.parametrize("value", [
@@ -99,7 +75,7 @@ def test_malformed_aadhaar_fails(value):
     assert validate_aadhaar(value).valid is False
 
 
-def test_verhoeff_p_rows_are_permutations():
-    """Guard: every permutation-table row must be a permutation of 0-9."""
-    for row in _VERHOEFF_P:
-        assert sorted(row) == list(range(10))
+def test_aadhaar_spaces_stripped():
+    """LLMs often return Aadhaar with spaces; validator must strip them."""
+    assert validate_aadhaar("2233 4455 6677").valid is True
+    assert validate_aadhaar("2233-4455-6677").valid is False  # hyphens not stripped

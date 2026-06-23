@@ -36,13 +36,13 @@ def _rec(value, ocr=0.97):
 def _clean_extractions():
     """A consistent, high-quality document set for one applicant."""
     return {
-        "identity_proof": {   # Aadhaar
+        "aadhaar_card": {   # Aadhaar
             "name": _rec("Priya Sharma"),
             "date_of_birth": _rec("1994-02-11"),
             "aadhaar": _rec(VALID_AADHAAR),
             "address": _rec("12 MG Road, Pune 411001"),
         },
-        "address_proof": {    # PAN card carrying name + dob + pan
+        "pan_card": {    # PAN card carrying name + dob + pan
             "name": _rec("PRIYA SHARMA"),
             "date_of_birth": _rec("11/02/1994"),       # different format, same date
             "pan": _rec("ABCDE1234F"),
@@ -116,13 +116,13 @@ def test_cross_checks_only_for_fields_with_two_or_more_sources():
 
     # name appears on all 5 docs → C(5,2) = 10 pairwise checks
     assert len(by_field["name"]) == 10
-    # pan on 2 docs (address_proof, form16) → 1 check
+    # pan on 2 docs (pan_card, form16) → 1 check
     assert len(by_field["pan"]) == 1
     # gross_monthly_income on 2 docs (salary_slips, form16) → 1 check
     assert len(by_field["gross_monthly_income"]) == 1
     # single-source fields get NO check
-    assert "aadhaar" not in by_field        # only identity_proof
-    assert "address" not in by_field        # only identity_proof
+    assert "aadhaar" not in by_field        # only aadhaar_card
+    assert "address" not in by_field        # only aadhaar_card
     # all clean → every check matches, and both real sources are named
     assert all(c.matches for c in checks)
     assert all(c.source_a and c.source_b for c in checks)
@@ -170,18 +170,18 @@ def test_clean_docs_verify_with_per_field_confidence():
 
 def test_cross_source_mismatch_on_key_field_routes_to_exception():
     ext = _clean_extractions()
-    ext["address_proof"]["date_of_birth"] = _rec("1993-02-11")   # disagrees with Aadhaar
+    ext["pan_card"]["date_of_birth"] = _rec("1993-02-11")   # disagrees with Aadhaar
     result = evaluate(ext)
     assert result.status == "exception"
     assert any(r.startswith("cross_source_mismatch:date_of_birth") for r in result.exception_reasons)
     # the reason names both disagreeing sources
-    assert any("identity_proof" in r and "address_proof" in r
+    assert any("aadhaar_card" in r and "pan_card" in r
                for r in result.exception_reasons if r.startswith("cross_source_mismatch"))
 
 
 def test_low_ocr_on_key_field_routes_to_exception():
     ext = _clean_extractions()
-    ext["identity_proof"]["aadhaar"] = _rec(VALID_AADHAAR, ocr=0.20)   # unreadable
+    ext["aadhaar_card"]["aadhaar"] = _rec(VALID_AADHAAR, ocr=0.20)   # unreadable
     result = evaluate(ext)
     assert result.status == "exception"
     assert "low_confidence:aadhaar" in result.exception_reasons
@@ -190,7 +190,7 @@ def test_low_ocr_on_key_field_routes_to_exception():
 
 def test_missing_key_field_routes_to_exception():
     ext = _clean_extractions()
-    del ext["address_proof"]["pan"]
+    del ext["pan_card"]["pan"]
     del ext["form16"]["pan"]   # pan now on no document
     result = evaluate(ext)
     assert result.status == "exception"
@@ -199,7 +199,7 @@ def test_missing_key_field_routes_to_exception():
 
 def test_format_invalid_id_routes_to_exception():
     ext = _clean_extractions()
-    ext["address_proof"]["pan"] = _rec("INVALID99")   # fails PAN structure
+    ext["pan_card"]["pan"] = _rec("INVALID99")   # fails PAN structure
     ext["form16"]["pan"] = _rec("INVALID99")
     result = evaluate(ext)
     assert result.status == "exception"
@@ -268,7 +268,7 @@ def test_verify_documents_clean_persists_profile_and_verifies():
     names = {fc.field_name for fc in app.kyc.field_confidence}
     assert KEY_FIELDS <= names
     # each contributing document marked verified
-    assert app.features["documents"]["identity_proof"]["verified"] is True
+    assert app.features["documents"]["aadhaar_card"]["verified"] is True
     assert app.features["documents"]["form16"]["verified"] is True
 
     # exactly one agent_reasoning event, carrying cross-checks + reasons
@@ -281,7 +281,7 @@ def test_verify_documents_clean_persists_profile_and_verifies():
 def test_verify_documents_low_confidence_routes_to_kyc_exception():
     repo, audit = _stores()
     ext = _clean_extractions()
-    ext["identity_proof"]["aadhaar"] = _rec(VALID_AADHAAR, ocr=0.15)
+    ext["aadhaar_card"]["aadhaar"] = _rec(VALID_AADHAAR, ocr=0.15)
     app_id = _seed_with_docs(repo, ext.keys())
 
     result = verify_documents(repo, audit, app_id, extract=_fake_extract(ext))
@@ -292,7 +292,7 @@ def test_verify_documents_low_confidence_routes_to_kyc_exception():
     # not verified → KYC left PENDING (human review via KYC_EXCEPTION, not terminal)
     assert app.kyc.status == KycStatus.PENDING
     # the Aadhaar document is marked NOT verified
-    assert app.features["documents"]["identity_proof"]["verified"] is False
+    assert app.features["documents"]["aadhaar_card"]["verified"] is False
     events = [e for e in audit.reconstruct(app_id) if e.event_type == "agent_reasoning"]
     assert events[0].payload["status"] == "exception"
     assert events[0].payload["exception_reasons"]
@@ -311,6 +311,11 @@ def test_claimed_pan_mismatch_routes_to_kyc_exception():
     assert result.status == "exception"
     assert any(r.startswith("cross_source_mismatch:pan") and "applicant_form" in r
                for r in result.exception_reasons)
+    # the applicant's claim is NEVER clobbered by the document, and the documented
+    # value is kept separately so the underwriter can compare the two (#19 issue-1).
+    saved = repo.get(app.application_id)
+    assert saved.applicant.pan == "ZZZZZ9999Z"                            # claim preserved
+    assert saved.features["documented_identity"]["pan"] == "ABCDE1234F"   # document recorded
 
 
 def test_claimed_values_matching_documents_stay_verified():
@@ -327,6 +332,10 @@ def test_claimed_values_matching_documents_stay_verified():
     ev = [e for e in audit.reconstruct(app.application_id) if e.event_type == "agent_reasoning"][0]
     form_checks = [c for c in ev.payload["cross_checks"] if c["source_a"] == "applicant_form"]
     assert form_checks and all(c["matches"] for c in form_checks)
+    # claim preserved on the applicant; documented identity recorded alongside.
+    saved = repo.get(app.application_id)
+    assert saved.applicant.pan == "ABCDE1234F"
+    assert saved.features["documented_identity"]["pan"] == "ABCDE1234F"
 
 
 def test_verify_documents_requires_uploaded_documents():
@@ -352,10 +361,10 @@ def test_make_ocr_extractor_calls_harness_per_document():
 
     harness = AdapterHarness()
     harness.register(MockAdapter("ocr", {
-        "extract:identity_proof": {"name": _rec("Priya Sharma"), "aadhaar": _rec(VALID_AADHAAR)},
+        "extract:aadhaar_card": {"name": _rec("Priya Sharma"), "aadhaar": _rec(VALID_AADHAAR)},
     }))
     extract = make_ocr_extractor(harness)
-    data = extract("app-1", "identity_proof")
+    data = extract("app-1", "aadhaar_card")
     assert data["aadhaar"]["value"] == VALID_AADHAAR
 
 
@@ -378,7 +387,7 @@ def test_worker_build_doc_extractor_mock_vs_live():
     repo, _ = _stores()
     extract = build_doc_extractor("mock", repo)
     # unknown application → valid-format fallbacks (so KYC can still run)
-    assert extract("app-1", "identity_proof")["aadhaar"]["value"] == VALID_AADHAAR
+    assert extract("app-1", "aadhaar_card")["aadhaar"]["value"] == VALID_AADHAAR
     # live now builds the LLM extractor (#9) instead of raising — it's callable
     # (it would hit the store + Gemini at call time, which we don't invoke here).
     assert callable(build_doc_extractor("live", repo))
@@ -391,12 +400,12 @@ def test_reflective_ocr_echoes_real_applicant_name():
     repo, audit = _stores()
     app = Application(applicant=Applicant(full_name="Ravi Kumar"))
     app.features = {"documents": {d: {"uploaded": True, "verified": None} for d in
-                                  ["identity_proof", "address_proof", "salary_slips", "bank_statement", "form16"]},
+                                  ["aadhaar_card", "pan_card", "salary_slips", "bank_statement", "form16"]},
                     "monthly_income": 75000, "employer_name": "Infosys"}
     repo.save(app)
 
     extract = make_reflective_ocr_extractor(repo)
-    assert extract(app.application_id, "identity_proof")["name"]["value"] == "Ravi Kumar"
+    assert extract(app.application_id, "aadhaar_card")["name"]["value"] == "Ravi Kumar"
 
     result = verify_documents(repo, audit, app.application_id, extract=extract)
     assert result.status == "verified"

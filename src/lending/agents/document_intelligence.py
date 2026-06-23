@@ -207,7 +207,7 @@ def _payslip_flags(extractions: dict, *, policy_version: str) -> list[RiskFlag]:
 
 # Canonical fields the applicant self-reports on the form that we can corroborate
 # against the documents (identity fields with a type-aware comparison).
-_CLAIMABLE_FIELDS = frozenset({"name", "pan", "aadhaar", "date_of_birth"})
+_CLAIMABLE_FIELDS = frozenset({"name", "pan", "aadhaar", "date_of_birth", "gross_monthly_income"})
 
 
 def _claimed_cross_checks(profile: dict, claimed: dict | None, *, policy_version: str) -> list[CrossSourceCheck]:
@@ -349,11 +349,16 @@ def verify_documents(
     # BEFORE the documented profile overwrites them — so we can corroborate what was
     # claimed against what the documents actually show.
     applicant = application.applicant
+    stated_features = application.features or {}
     claimed = {
         "name": getattr(applicant, "full_name", None),
         "pan": getattr(applicant, "pan", None),
         "aadhaar": getattr(applicant, "aadhaar", None),
         "date_of_birth": getattr(applicant, "date_of_birth", None),
+        # Income: applicant's self-reported value, compared against doc-extracted
+        # gross so a material inflation (e.g. ₹2L claimed, ₹95k in payslip) is
+        # flagged as a cross-source mismatch and routes to KYC_EXCEPTION.
+        "gross_monthly_income": stated_features.get("monthly_income") or stated_features.get("gross_monthly_income"),
     }
     claimed = {k: v for k, v in claimed.items() if v not in (None, "")}
 
@@ -361,12 +366,43 @@ def verify_documents(
     result = evaluate(extractions, key_fields=key_fields, policy_version=policy_version, claimed=claimed)
 
     # --- Persist the verified profile back onto the application ---
+    # Documents are a SOURCE, not an overwrite. The applicant's self-reported
+    # identity (name/PAN/Aadhaar/DOB/address) stays exactly as they entered it, so
+    # the underwriter can see claim-vs-document side by side and any disagreement
+    # (already recorded as a claimed-vs-documented cross-check) stays visible. The
+    # documented identity values are kept separately under `documented_identity`.
+    # A field the applicant left blank is filled from the documents (no claim to
+    # preserve, and downstream — e.g. age from DOB — still needs a value). Non-
+    # identity documented fields (income, employer, …) have no competing claim, so
+    # they land in features as before.
     feats = dict(application.features or {})
+
+    # Snapshot applicant-stated feature values BEFORE docs overwrite them. The rules
+    # engine needs the doc-extracted income (more reliable), so the overwrite still
+    # happens — but the original claim is saved under `applicant_stated` so the
+    # underwriter can compare claim vs. document side by side.
+    _OVERWRITABLE_FEATURES = frozenset({
+        "monthly_income", "employer_name", "gross_monthly_income", "net_monthly_income",
+        "employment_type", "employment_tenure_months",
+    })
+    applicant_stated: dict = {}
+    for f in _OVERWRITABLE_FEATURES:
+        if feats.get(f) not in (None, ""):
+            applicant_stated[f] = feats[f]
+
+    documented_identity: dict = {}
     for f, value in result.profile.items():
         if f in _APPLICANT_FIELDS:
-            setattr(application.applicant, _APPLICANT_FIELDS[f], value)
+            documented_identity[f] = value
+            attr = _APPLICANT_FIELDS[f]
+            if getattr(application.applicant, attr, None) in (None, ""):
+                setattr(application.applicant, attr, value)   # fill a blank, never clobber a claim
         else:
             feats[f] = value
+    if documented_identity:
+        feats["documented_identity"] = documented_identity
+    if applicant_stated:
+        feats["applicant_stated"] = applicant_stated
     # Keep the rules engine's `monthly_income` (gross) in sync when known.
     if "gross_monthly_income" in result.profile:
         feats["monthly_income"] = result.profile["gross_monthly_income"]

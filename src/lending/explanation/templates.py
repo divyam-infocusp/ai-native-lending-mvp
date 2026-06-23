@@ -62,6 +62,15 @@ TEMPLATES: dict[tuple[str, str], Template] = {
         "Your overall credit assessment score did not meet the minimum required threshold.",
         "overall credit assessment score",
     ),
+    # ---- Human-override reason codes (#15, §16.10) — underwriter-initiated declines ----
+    ("DOC_NOT_GENUINE", "en"): Template(
+        "After manual review, we were unable to verify the authenticity of one or more of your submitted identity documents.",
+        "unable to verify the authenticity",
+    ),
+    ("CANNOT_UNDERWRITE", "en"): Template(
+        "After manual review, our underwriter was unable to complete an assessment for this application.",
+        "unable to complete an assessment",
+    ),
     # ---- Hindi (subset, to demonstrate per-language selection with code-inserted numbers) ----
     ("LOW_CIBIL", "hi"): Template(
         "आपका क्रेडिट ब्यूरो स्कोर {cibil_score} आवश्यक न्यूनतम {min_cibil_score} से कम है।",
