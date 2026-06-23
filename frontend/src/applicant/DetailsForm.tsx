@@ -5,18 +5,19 @@ import { api, REQUIRED_DOCUMENTS } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { ErrorNote } from "../components/ui";
 
-// Demo convenience: a complete, valid sample so you can run a scenario without
-// re-typing every field. The scenario selector drives the actual outcome.
+// Demo convenience: prefilled from Aarav Sharma's test documents in test_data/
+// (01_aadhaar.png, 02_pan.png, 03_payslip.png, 04_form16.png). These match the
+// real uploaded files exactly so OCR cross-checks pass cleanly.
 const DEFAULTS: Record<string, string> = {
-  date_of_birth: "1990-05-10",
-  pan: "ABCDE1234F",
-  aadhaar: "234567890124",
+  date_of_birth: "1990-08-14",
+  pan: "ABCPS1234F",
+  aadhaar: "223344556677",
   mobile: "9876543210",
-  current_address: "12 MG Road, Pune 411001",
+  current_address: "Flat 402, Sunrise Residency, MG Road, Shivajinagar, Pune, Maharashtra - 411005",
   employment_type: "salaried",
-  employer_name: "Infosys",
-  employment_tenure_months: "48",
-  monthly_income: "85000",
+  employer_name: "Technova Solutions Pvt. Ltd.",
+  employment_tenure_months: "24",
+  monthly_income: "95000",
   loan_amount_requested: "300000",
   loan_tenure_months: "36",
   loan_purpose: "home renovation",
@@ -34,10 +35,10 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
   {
     title: "Identity",
     fields: [
-      { key: "full_name", label: "Full name", placeholder: "Ravi Kumar" },
-      { key: "date_of_birth", label: "Date of birth", placeholder: "1990-05-10" },
-      { key: "pan", label: "PAN", placeholder: "ABCDE1234F" },
-      { key: "aadhaar", label: "Aadhaar", placeholder: "234567890124" },
+      { key: "full_name", label: "Full name", placeholder: "Aarav Sharma" },
+      { key: "date_of_birth", label: "Date of birth", placeholder: "1990-08-14" },
+      { key: "pan", label: "PAN", placeholder: "ABCPS1234F" },
+      { key: "aadhaar", label: "Aadhaar", placeholder: "223344556677" },
     ],
   },
   {
@@ -51,9 +52,9 @@ const GROUPS: { title: string; fields: FieldDef[] }[] = [
     title: "Employment & income",
     fields: [
       { key: "employment_type", label: "Employment type", options: ["salaried", "self_employed", "business", "unemployed"] },
-      { key: "employer_name", label: "Employer", placeholder: "Infosys" },
-      { key: "employment_tenure_months", label: "Tenure (months)", type: "number", placeholder: "48" },
-      { key: "monthly_income", label: "Monthly income (₹)", type: "number", placeholder: "85000" },
+      { key: "employer_name", label: "Employer", placeholder: "Technova Solutions Pvt. Ltd." },
+      { key: "employment_tenure_months", label: "Tenure (months)", type: "number", placeholder: "24" },
+      { key: "monthly_income", label: "Monthly income (₹)", type: "number", placeholder: "95000" },
     ],
   },
   {
@@ -83,7 +84,7 @@ export function DetailsForm({
   // name carries over from the signed-in applicant either way.
   const [values, setValues] = useState<Record<string, string>>(() =>
     prefill
-      ? { ...DEFAULTS, full_name: user?.name || "Ravi Kumar" }
+      ? { ...DEFAULTS, full_name: user?.name || "Aarav Sharma" }
       : { full_name: user?.name || "" },
   );
   const [uploaded, setUploaded] = useState<Set<string>>(new Set());

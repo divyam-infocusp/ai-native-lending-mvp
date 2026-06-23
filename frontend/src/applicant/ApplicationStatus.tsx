@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { api, Application, AuditEvent } from "../api/client";
 import { Spinner, ErrorNote } from "../components/ui";
 import { ApplicantJourney } from "./ApplicantJourney";
@@ -52,13 +52,18 @@ const STATUS_LABEL: Record<StageState, string> = {
 
 // What reaching a given state implies has already been completed — so the summary
 // is correct even before the audit trail finishes loading.
+// DECLINED is intentionally NOT mapped here: the audit trail tells us which stages
+// were actually reached, so we never pre-assume KYC/credit were done for a decline
+// that happened at the KYC stage. Without audit events we show the bare minimum.
 function impliedVisited(state: string): Set<string> {
   const v = new Set<string>([state]);
   const add = (...s: string[]) => s.forEach((x) => v.add(x));
-  if (["REFERRED", "DECLINED", "APPROVED", "OFFER_GENERATED", "OFFER_ACCEPTED", "OFFER_EXPIRED", "DECISION_READY"].includes(state))
+  if (["REFERRED", "APPROVED", "OFFER_GENERATED", "OFFER_ACCEPTED", "OFFER_EXPIRED", "DECISION_READY"].includes(state))
     add("LEAD_QUALIFIED", "KYC_VERIFIED", "DECISION_READY");
   if (state === "UW_EXCEPTION") add("LEAD_QUALIFIED", "KYC_VERIFIED");
   if (state === "KYC_EXCEPTION") add("LEAD_QUALIFIED");
+  // DECLINED: don't pre-assume anything — the audit trail's state_transitions
+  // tell us exactly how far the application got before it was declined.
   return v;
 }
 
@@ -75,10 +80,14 @@ function stageState(key: string, state: string, visited: Set<string>): StageStat
     case "kyc":
       if (state === "KYC_EXCEPTION") return "attention";
       if (state === "APPLICATION_SUBMITTED" || state === "KYC_IN_PROGRESS") return "active";
+      // Declined while parked at KYC_EXCEPTION → the KYC stage failed, not done.
+      if (state === "DECLINED" && v("KYC_EXCEPTION") && !v("KYC_VERIFIED")) return "failed";
       return v("KYC_VERIFIED") ? "done" : "upcoming";
     case "credit":
       if (state === "UW_EXCEPTION") return "attention";
       if (state === "UNDERWRITING") return "active";
+      // Declined before credit ran (e.g. from KYC stage) → credit is just upcoming.
+      if (state === "DECLINED" && !v("DECISION_READY") && !v("UNDERWRITING")) return "upcoming";
       return v("DECISION_READY") ? "done" : "upcoming";
     case "decision":
       if (state === "DECLINED" || state === "LEAD_DECLINED") return "failed";
@@ -136,6 +145,8 @@ function JourneySummary({ state, visited }: { state: string; visited: Set<string
 
 export function ApplicationStatus() {
   const { id } = useParams();
+  const location = useLocation();
+  const justSubmitted: boolean = !!(location.state as any)?.submitted;
   const [app, setApp] = useState<Application | null>(null);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -172,13 +183,42 @@ export function ApplicationStatus() {
   if (error) return <div className="max-w-2xl mx-auto"><ErrorNote>{error}</ErrorNote></div>;
   if (!app) return <div className="max-w-2xl mx-auto card p-8 grid place-items-center"><Spinner label="Loading…" /></div>;
 
-  // A draft that was never submitted → resume the conversation.
-  if (!state) {
+  // Not yet submitted → resume the conversation.
+  // But if the user just submitted (justSubmitted flag), the workflow is launching
+  // and the state will appear within seconds — show a "processing" screen instead.
+  if (!state && !justSubmitted) {
     return (
       <div>
         <BackLink />
         <div className="max-w-2xl mx-auto mb-2 text-sm text-slate-500">Continue your application</div>
         <ApplicantJourney resumeId={app.application_id} />
+      </div>
+    );
+  }
+
+  // Workflow just launched — show the stage stepper immediately (stages are
+  // "upcoming") with a "Launching…" header. The 2-second poll replaces this as
+  // soon as the first state_transition event lands.
+  if (!state) {
+    return (
+      <div className="max-w-2xl mx-auto space-y-4">
+        <BackLink />
+        <div className="card p-6 border-l-4 border-l-brand animate-fade-in">
+          <div className="flex items-center gap-3 mb-2">
+            <span className="inline-block h-4 w-4 rounded-full bg-brand animate-pulse" />
+            <h1 className="text-lg font-semibold text-slate-900">Launching your application…</h1>
+          </div>
+          <p className="text-slate-500 text-sm">
+            We've received your consent and kicked off the checks. This page updates live — your
+            application is moving through the stages below right now.
+          </p>
+        </div>
+        <div className="card p-6">
+          <JourneySummary state="APPLICATION_SUBMITTED" visited={new Set(["APPLICATION_SUBMITTED"])} />
+          <p className="text-xs text-slate-400 mt-4 pt-4 border-t border-slate-100">
+            No action needed from you. We'll update each stage as it completes.
+          </p>
+        </div>
       </div>
     );
   }

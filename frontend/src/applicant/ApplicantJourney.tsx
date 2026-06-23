@@ -129,7 +129,7 @@ export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
       await api.captureConsent(appId, BUREAU_PULL_PURPOSE);
       await api.captureConsent(appId, DOC_AI_PURPOSE);   // authorize AI document processing (#9)
       await api.startWorkflow(appId);
-      navigate(`/apply/${appId}`);   // → tracked status page (#40)
+      navigate(`/apply/${appId}`, { state: { submitted: true } });   // → live status page (#40)
     } catch (e) {
       fail(e);
     } finally {
@@ -186,7 +186,7 @@ export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
         <Panel>
           <DetailsForm
             appId={appId}
-            prefill={demoMode}
+            prefill={true}
             onDone={() => setStep("consent")}
             onSwitchToChat={() => setFormMode(false)}
           />
