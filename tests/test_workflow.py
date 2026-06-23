@@ -110,7 +110,7 @@ CLEAN_FEATURES = {
 }
 
 
-_CLEAN_DOCS = ["identity_proof", "address_proof", "salary_slips", "bank_statement", "form16"]
+_CLEAN_DOCS = ["aadhaar_card", "pan_card", "salary_slips", "bank_statement", "form16"]
 
 
 def _seed_application(repo: ApplicationRepository, features: dict | None = None) -> str:
@@ -132,9 +132,9 @@ def _rec(value, ocr=0.97):
 
 
 _CLEAN_EXTRACTIONS = {
-    "identity_proof": {"name": _rec("Priya Sharma"), "date_of_birth": _rec("1994-02-11"),
+    "aadhaar_card": {"name": _rec("Priya Sharma"), "date_of_birth": _rec("1994-02-11"),
                        "aadhaar": _rec("234567890124"), "address": _rec("12 MG Road, Pune")},
-    "address_proof": {"name": _rec("Priya Sharma"), "date_of_birth": _rec("1994-02-11"),
+    "pan_card": {"name": _rec("Priya Sharma"), "date_of_birth": _rec("1994-02-11"),
                       "pan": _rec("ABCDE1234F")},
     "salary_slips": {"name": _rec("Priya Sharma"), "employer_name": _rec("Acme Corp"),
                      "gross_monthly_income": _rec(90_000), "net_monthly_income": _rec(72_000)},
@@ -151,7 +151,7 @@ def _doc_extract(application_id, doc_type):
 def _doc_extract_lowconf(application_id, doc_type):
     """Same docs, but the Aadhaar is unreadable → KYC routes to exception."""
     ext = {k: dict(v) for k, v in _CLEAN_EXTRACTIONS.get(doc_type, {}).items()}
-    if doc_type == "identity_proof":
+    if doc_type == "aadhaar_card":
         ext["aadhaar"] = _rec("234567890124", ocr=0.15)
     return ext
 

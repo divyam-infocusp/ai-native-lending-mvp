@@ -49,8 +49,8 @@ REQUIRED_FIELDS = [
     "loan_amount_requested", "loan_tenure_months", "loan_purpose",
 ]
 REQUIRED_DOCUMENTS = [
-    "identity_proof",     # Aadhaar/PAN/Passport/DL
-    "address_proof",      # utility bill / Aadhaar / passport
+    "aadhaar_card",     # Aadhaar/PAN/Passport/DL
+    "pan_card",      # utility bill / Aadhaar / passport
     "salary_slips",       # last 2-3 months
     "form16",             # or ITR, previous year
     # bank_statement intentionally excluded — its real value is transaction

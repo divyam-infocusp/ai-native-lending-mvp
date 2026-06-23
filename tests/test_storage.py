@@ -51,13 +51,13 @@ def test_store_loader_feeds_extractor(tmp_path):
     from lending.adapters.llm_ocr import make_llm_extractor
 
     store = LocalDocumentStore(str(tmp_path))
-    store.put("app1", "address_proof", b"%PDF-1.4 PAN ABCDE1234F", "application/pdf")
+    store.put("app1", "pan_card", b"%PDF-1.4 PAN ABCDE1234F", "application/pdf")
 
     def fake_pass(_doc, _doc_type, _fields):
         return [{"field": "pan", "value": "ABCDE1234F", "source_quote": "PAN ABCDE1234F"}]
 
     extract = make_llm_extractor(make_store_loader(store), fake_pass, samples=2)
-    out = extract("app1", "address_proof")
+    out = extract("app1", "pan_card")
     assert out["pan"]["value"] == "ABCDE1234F"
 
 
@@ -67,7 +67,7 @@ def test_store_loader_handles_image(tmp_path):
     buf = io.BytesIO()
     Image.new("RGB", (50, 50), "white").save(buf, format="PNG")
     store = LocalDocumentStore(str(tmp_path))
-    store.put("app1", "identity_proof", buf.getvalue(), "image/png")
-    doc = make_store_loader(store)("app1", "identity_proof")
+    store.put("app1", "aadhaar_card", buf.getvalue(), "image/png")
+    doc = make_store_loader(store)("app1", "aadhaar_card")
     assert doc.mime_type == "image/jpeg"   # downscale path re-encodes to JPEG
     assert doc.text is None                # images have no text layer

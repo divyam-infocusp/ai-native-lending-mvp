@@ -85,7 +85,7 @@ def test_make_llm_extractor_samples_and_grounds():
                         text="Name: Ravi Kumar PAN: ABCDE1234F")
 
     extract = make_llm_extractor(load, fake_pass, samples=3)
-    out = extract("app-1", "address_proof")
+    out = extract("app-1", "pan_card")
     assert calls["n"] == 3                              # sampled N times
     assert out["name"]["value"] == "Ravi Kumar"
     assert out["pan"]["ocr_conf"] == 1.0               # unanimous + quotes present

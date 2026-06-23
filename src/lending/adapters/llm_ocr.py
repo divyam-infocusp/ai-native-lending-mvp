@@ -37,8 +37,8 @@ from pydantic import BaseModel
 # Canonical fields each document type contributes (mirrors the mock's per-doc set;
 # bank_statement is intentionally excluded — see #53).
 FIELD_SCHEMAS: dict[str, list[str]] = {
-    "identity_proof": ["name", "date_of_birth", "aadhaar", "address"],
-    "address_proof": ["name", "date_of_birth", "pan"],
+    "aadhaar_card": ["name", "date_of_birth", "aadhaar", "address"],
+    "pan_card": ["name", "date_of_birth", "pan"],
     "salary_slips": ["name", "employer_name", "gross_monthly_income", "net_monthly_income"],
     "form16": ["name", "pan", "employer_name", "gross_monthly_income"],
 }

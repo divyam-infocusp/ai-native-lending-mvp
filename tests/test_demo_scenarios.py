@@ -46,7 +46,7 @@ def test_scenario_bureau_clean_is_default():
 def test_ocr_doc_mismatch_perturbs_name():
     repo, app_id = _repo_with("doc_mismatch")
     extract = make_reflective_ocr_extractor(repo)
-    id_name = extract(app_id, "identity_proof")["name"]["value"]
+    id_name = extract(app_id, "aadhaar_card")["name"]["value"]
     f16_name = extract(app_id, "form16")["name"]["value"]
     assert id_name == "Ravi Kumar"
     assert f16_name != id_name                              # cross-source name mismatch → KYC_EXCEPTION

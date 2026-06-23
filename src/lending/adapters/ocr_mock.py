@@ -27,13 +27,13 @@ def _rec(value, ocr: float = 0.97) -> dict:
 
 # A clean applicant whose fields agree across every document.
 _CLEAN_FIXTURES: dict[str, dict] = {
-    "extract:identity_proof": {   # Aadhaar
+    "extract:aadhaar_card": {   # Aadhaar
         "name": _rec("Priya Sharma"),
         "date_of_birth": _rec("1994-02-11"),
         "aadhaar": _rec("234567890124"),       # passes Verhoeff
         "address": _rec("12 MG Road, Pune 411001"),
     },
-    "extract:address_proof": {    # PAN card
+    "extract:pan_card": {    # PAN card
         "name": _rec("PRIYA SHARMA"),
         "date_of_birth": _rec("11/02/1994"),
         "pan": _rec("ABCDE1234F"),
@@ -118,9 +118,9 @@ def make_reflective_ocr_extractor(repository):
         net = round(gross * 0.8)
 
         per_doc = {
-            "identity_proof": {"name": _rec(name), "date_of_birth": _rec(dob),
+            "aadhaar_card": {"name": _rec(name), "date_of_birth": _rec(dob),
                                "aadhaar": _rec(aadhaar), "address": _rec(address)},
-            "address_proof": {"name": _rec(name), "date_of_birth": _rec(dob), "pan": _rec(pan)},
+            "pan_card": {"name": _rec(name), "date_of_birth": _rec(dob), "pan": _rec(pan)},
             "salary_slips": {"name": _rec(name), "employer_name": _rec(employer),
                              "gross_monthly_income": _rec(gross), "net_monthly_income": _rec(net)},
             "bank_statement": {"name": _rec(name), "net_monthly_income": _rec(net)},

@@ -172,7 +172,7 @@ def test_documents_required_for_completeness():
     r1 = copilot.turn(repo, audit, app_id)
     assert r1.complete is False
     assert r1.missing == [
-        "document:identity_proof", "document:address_proof",
+        "document:aadhaar_card", "document:pan_card",
         "document:salary_slips", "document:form16",
     ]
 
