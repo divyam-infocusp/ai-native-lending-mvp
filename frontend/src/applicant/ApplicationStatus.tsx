@@ -86,8 +86,14 @@ function stageState(key: string, state: string, visited: Set<string>): StageStat
     case "credit":
       if (state === "UW_EXCEPTION") return "attention";
       if (state === "UNDERWRITING") return "active";
-      // Declined before credit ran (e.g. from KYC stage) → credit is just upcoming.
-      if (state === "DECLINED" && !v("DECISION_READY") && !v("UNDERWRITING")) return "upcoming";
+      if (state === "DECLINED") {
+        // Declined before credit ran (e.g. from the KYC stage) → not reached yet.
+        if (!v("DECISION_READY") && !v("UNDERWRITING")) return "upcoming";
+        // Declined after the credit/affordability assessment ran → this is where it
+        // failed (rules-engine knockouts like LOW_CIBIL / HIGH_DTI / INSUFFICIENT_INCOME
+        // are applied here), so mark it failed rather than a misleading green.
+        return "failed";
+      }
       return v("DECISION_READY") ? "done" : "upcoming";
     case "decision":
       if (state === "DECLINED" || state === "LEAD_DECLINED") return "failed";
