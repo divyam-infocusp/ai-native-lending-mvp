@@ -49,6 +49,37 @@ def test_soft_hit_refers():
     assert "HIGH_DTI" in d.reason_codes
 
 
+def test_clean_approval_records_income_sensitivity():
+    # A clean approval is stress-tested; the analysis is recorded even when it holds.
+    d = decide(CLEAN)
+    assert d.disposition.value == "approve"
+    assert d.sensitivity is not None
+    assert d.sensitivity["sensitive"] is False
+    assert d.sensitivity["original_band"] == d.band
+    assert d.sensitivity["haircut_pct"] > 0
+
+
+def test_income_sensitive_clean_applicant_is_referred(monkeypatch):
+    # When the income-haircut re-score flips the band, a would-be approval is
+    # referred — and the refer is self-justifying (reason code + explanation).
+    from types import SimpleNamespace
+    from lending.decision import assembly
+    from lending.scorecard import RiskBand
+
+    fake = SimpleNamespace(sensitive=True, refer=True,
+                           original_band=RiskBand.A, stressed_band=RiskBand.B,
+                           original_offer=None, stressed_offer=None)
+    monkeypatch.setattr(assembly, "income_sensitivity", lambda *a, **k: fake)
+
+    d = decide(CLEAN)
+    assert d.disposition.value == "refer"
+    assert d.reason_codes == ["INCOME_SENSITIVE"]
+    assert d.explanation and "income" in d.explanation.lower()
+    assert d.sensitivity["sensitive"] is True
+    assert d.sensitivity["original_band"] == "A"
+    assert d.sensitivity["stressed_band"] == "B"
+
+
 def test_not_lendable_band_declines():
     # Boundary profile that passes rules but scores below the lendable floor
     d = decide(tweak(cibil_score=650, monthly_income=20_000, employment_tenure_months=6,

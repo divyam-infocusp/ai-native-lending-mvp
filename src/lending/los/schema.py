@@ -110,6 +110,7 @@ class Decision(BaseModel):
     band: Optional[str] = None
     version_set: Optional[VersionSet] = None  # full pinned version stamp (§9.4, #7)
     explanation: Optional[str] = None         # rendered adverse-action text, frozen at decision time (§9.1)
+    sensitivity: Optional[dict] = None        # income-haircut stress test (§16.8): {sensitive, original_band, stressed_band, haircut_pct}
 
 
 # ---------------------------------------------------------------------------

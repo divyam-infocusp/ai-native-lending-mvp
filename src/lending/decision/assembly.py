@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from lending.audit import EventType
 from lending.explanation import build_context, render
 from lending.governance import VersionSet, active_version_set, validate_version_set
+from lending.policy import SCORECARD_POLICY
 from lending.pricing import income_sensitivity
 from lending.rules_engine import ApplicantFeatures, DispositionHint, evaluate
 from lending.los.schema import Decision, Disposition
@@ -41,6 +42,7 @@ def decide(
     rules_result = evaluate(features, vs.rules)
     score_result = score(features, vs.scorecard)
     reason_codes = [hit.reason_code for hit in rules_result.policy_hits]
+    sensitivity_record = None
 
     if rules_result.disposition_hint == DispositionHint.DECLINE:
         disposition = Disposition.DECLINE
@@ -51,17 +53,30 @@ def decide(
     elif rules_result.disposition_hint == DispositionHint.ESCALATE:
         disposition = Disposition.REFER
     else:
-        # Clean so far: gate auto-approve on income-haircut sensitivity (§16.8).
+        # Clean so far: stress-test affordability with an income-haircut re-score
+        # (§16.8) — the gate unique to decision assembly. Record it either way, so
+        # the audit trail shows *why* a clean-looking applicant was referred (or
+        # that they were stress-tested and the band held).
         sensitivity = income_sensitivity(
             features, scorecard_version=vs.scorecard, pricing_version=vs.pricing
         )
-        disposition = Disposition.REFER if sensitivity.sensitive else Disposition.APPROVE
+        sensitivity_record = {
+            "sensitive": sensitivity.sensitive,
+            "original_band": sensitivity.original_band.value,
+            "stressed_band": sensitivity.stressed_band.value,
+            "haircut_pct": int(SCORECARD_POLICY[vs.scorecard]["income_haircut_pct"] * 100),
+        }
+        if sensitivity.sensitive:
+            disposition = Disposition.REFER
+            reason_codes = ["INCOME_SENSITIVE"]  # self-justifying refer (carries a reason + explanation)
+        else:
+            disposition = Disposition.APPROVE
 
-    explanation_text = (
-        render(reason_codes, language, build_context(vars(features), vs.rules)).text
-        if reason_codes
-        else ""
-    )
+    # Numbers for the templates; fold in the sensitivity figures for INCOME_SENSITIVE.
+    context = build_context(vars(features), vs.rules)
+    if sensitivity_record:
+        context = {**context, **sensitivity_record}
+    explanation_text = render(reason_codes, language, context).text if reason_codes else ""
 
     return Decision(
         disposition=disposition,
@@ -73,6 +88,7 @@ def decide(
         band=score_result.band.value,
         version_set=vs,
         explanation=explanation_text,
+        sensitivity=sensitivity_record,
     )
 
 
@@ -113,6 +129,7 @@ def apply_override(repository, audit, application_id: str, *, disposition: Dispo
         band=engine.band if engine else None,
         version_set=engine.version_set if engine else None,
         explanation=engine.explanation if engine else None,
+        sensitivity=engine.sensitivity if engine else None,
     )
     application.decision = override
     application.updated_at = datetime.now(timezone.utc)

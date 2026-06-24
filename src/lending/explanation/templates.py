@@ -34,6 +34,10 @@ TEMPLATES: dict[tuple[str, str], Template] = {
         "Your total monthly debt obligations exceed the permitted limit of {max_dti_pct}% of income.",
         "total monthly debt obligations",
     ),
+    ("INCOME_SENSITIVE", "en"): Template(
+        "Your approval is sensitive to income variation: under a {haircut_pct}% income reduction your risk band would move from {original_band} to {stressed_band}, so we have referred it for a manual underwriter review.",
+        "sensitive to income variation",
+    ),
     ("SHORT_EMPLOYMENT", "en"): Template(
         "Your current employment tenure of {employment_tenure_months} months is below the required minimum of {min_employment_months} months.",
         "current employment tenure",
