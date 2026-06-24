@@ -41,6 +41,7 @@ export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
   const scroller = useRef<HTMLDivElement>(null);
 
   const [attachOpen, setAttachOpen] = useState(false);
+  const [blocked, setBlocked] = useState<string | null>(null);   // lead-intent gate (#21)
   const [uploaded, setUploaded] = useState<Set<string>>(new Set());
   const [formMode, setFormMode] = useState(false);   // form-fill alternative (#42)
   const [demoMode, setDemoMode] = useState(false);   // off = normal application
@@ -91,6 +92,10 @@ export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
     setBusy(true);
     try {
       const r = await api.onboardingMessage(appId, text);
+      if (r.intent === "blocked") {
+        setBlocked(r.assistant_message);   // not a loan request → stop the chat
+        return;
+      }
       setMessages((m) => [...m, { role: "assistant", text: r.assistant_message }]);
       if (r.complete) setStep("consent");
     } catch (e) {
@@ -122,6 +127,20 @@ export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
     }
   }
 
+  async function removeDoc(docType: string) {
+    if (!appId) return;
+    try {
+      await api.deleteDocument(appId, docType);
+      setUploaded((s) => {
+        const n = new Set(s);
+        n.delete(docType);
+        return n;
+      });
+    } catch (e) {
+      fail(e);
+    }
+  }
+
   async function authorizeAndSubmit() {
     if (!appId) return;
     setBusy(true);
@@ -142,7 +161,17 @@ export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
       <Stepper step={step} />
       {error && <div className="my-3"><ErrorNote>{error}</ErrorNote></div>}
 
-      {step === "start" && (
+      {blocked && (
+        <Panel>
+          <h1 className="text-lg font-semibold text-slate-900">We can't take this forward</h1>
+          <p className="text-slate-500 mt-1.5">{blocked}</p>
+          <button onClick={() => navigate("/apply")} className="btn-primary mt-6">
+            Start a new application
+          </button>
+        </Panel>
+      )}
+
+      {!blocked && step === "start" && (
         <Panel>
           <h1 className="text-xl font-semibold text-slate-900">Apply for a personal loan</h1>
           <p className="text-slate-500 mt-1.5">
@@ -182,7 +211,7 @@ export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
         </Panel>
       )}
 
-      {step === "chat" && formMode && appId && (
+      {!blocked && step === "chat" && formMode && appId && (
         <Panel>
           <DetailsForm
             appId={appId}
@@ -193,7 +222,7 @@ export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
         </Panel>
       )}
 
-      {step === "chat" && !formMode && (
+      {!blocked && step === "chat" && !formMode && (
         <Panel>
           <h1 className="text-lg font-semibold text-slate-900 mb-1">Tell us about yourself</h1>
           <p className="text-sm text-slate-500 mb-3">
@@ -235,7 +264,10 @@ export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
                   <li key={doc} className="flex items-center justify-between text-sm">
                     <span className="capitalize text-slate-600">{doc.replace(/_/g, " ")}</span>
                     {uploaded.has(doc) ? (
-                      <span className="text-emerald-600 font-medium">✓ uploaded</span>
+                      <span className="flex items-center gap-3">
+                        <span className="text-emerald-600 font-medium">✓ uploaded</span>
+                        <button onClick={() => removeDoc(doc)} className="text-slate-400 hover:text-rose-600">Remove</button>
+                      </span>
                     ) : (
                       <button onClick={() => upload(doc)} className="text-brand hover:underline">Upload</button>
                     )}
@@ -258,7 +290,7 @@ export function ApplicantJourney({ resumeId }: { resumeId?: string }) {
         </Panel>
       )}
 
-      {step === "consent" && (
+      {!blocked && step === "consent" && (
         <Panel>
           <h1 className="text-lg font-semibold text-slate-900">One last thing — your consent</h1>
           <p className="text-slate-500 mt-1.5">

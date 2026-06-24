@@ -29,6 +29,15 @@ def test_latest_write_wins(tmp_path):
     assert store.get("app1", "form16").data == b"v2"
 
 
+def test_delete_removes_document(tmp_path):
+    store = LocalDocumentStore(str(tmp_path))
+    store.put("app1", "pan_card", b"bytes", "image/png")
+    assert store.delete("app1", "pan_card") is True
+    assert store.get("app1", "pan_card") is None
+    # idempotent: deleting again is a no-op, never raises
+    assert store.delete("app1", "pan_card") is False
+
+
 def test_path_traversal_is_defanged(tmp_path):
     store = LocalDocumentStore(str(tmp_path))
     store.put("../../etc", "../passwd", b"x", "text/plain")

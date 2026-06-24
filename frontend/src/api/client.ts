@@ -96,6 +96,9 @@ export interface OnboardingTurn {
   complete: boolean;
   missing: string[];
   collected: Record<string, any>;
+  // Early lead-intent gate (#21): "blocked" = not a personal-loan request (stop),
+  // "needs_clarification" = ask once more, "ok" = proceed. Absent on older turns.
+  intent?: "ok" | "blocked" | "needs_clarification";
 }
 
 export interface PolicyView {
@@ -172,6 +175,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ doc_type: docType, reference }),
     }),
+  // Remove an attached document so it can be re-attached (cancel / replace).
+  deleteDocument: (id: string, docType: string) =>
+    req<unknown>(`/applications/${id}/documents/${docType}`, { method: "DELETE" }),
   // Real file upload (#9, Phase A) — multipart, so bypass the JSON `req` helper
   // (the browser sets the multipart boundary; we must not force Content-Type).
   uploadDocumentFile: async (id: string, docType: string, file: File) => {

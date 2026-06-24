@@ -25,7 +25,18 @@ def _turn(msg, extracted=None):
     return {"extracted": extracted or {}, "assistant_message": msg, "reasoning": ""}
 
 
-def _make(copilot=None):
+def _lead(segment_fit, reason_code):
+    """A scripted Lead Qualification output for the early intent gate (#21)."""
+    return {
+        "segment_fit": segment_fit,
+        "employment_type": "salaried" if segment_fit == "in_segment" else "unknown",
+        "reason_code": reason_code,
+        "confidence": 0.9 if segment_fit == "uncertain" else 0.95,
+        "reasoning": "test",
+    }
+
+
+def _make(copilot=None, lead_reason=None):
     engine = make_engine()
     repo = ApplicationRepository(engine)
     audit = AuditStore(engine)
@@ -41,7 +52,8 @@ def _make(copilot=None):
         reason=_scripted([_turn("Hi! What's your PAN and date of birth?")]),
         checkpointer=MemorySaver(),
     )
-    app = create_app(repo, audit=audit, copilot=cop, workflow_starter=starter, auth_service=auth)
+    app = create_app(repo, audit=audit, copilot=cop, lead_reason=lead_reason,
+                     workflow_starter=starter, auth_service=auth)
     client = TestClient(app, headers={"Authorization": f"Bearer {token}"})
     return client, repo, audit, started, applicant
 
@@ -79,6 +91,56 @@ def test_onboarding_message_runs_a_copilot_turn():
     assert body["assistant_message"].startswith("Hi!")
     assert body["complete"] is False                 # nothing collected yet
     assert "collected" in body and "missing" in body
+
+
+# ---------------------------------------------------------------------------
+# Early lead-intent gate (#21) — runs on the first substantive chat turn
+# ---------------------------------------------------------------------------
+
+def test_onboarding_blocks_out_of_segment_lead():
+    client, repo, *_ = _make(
+        lead_reason=_scripted([_lead("out_of_segment", "OUT_OF_SCOPE_NOT_A_LOAN")]))
+    app_id = _create(client)
+    resp = client.post(f"/applications/{app_id}/onboarding/message",
+                       json={"message": "I want to sell my old car, can you help?"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["intent"] == "blocked"
+    assert body["complete"] is False
+    assert body["collected"] == {}                    # no PII collected
+    # verdict persisted so the gate doesn't re-run
+    app = repo.get(app_id)
+    assert (app.features or {}).get("lead_intent", {}).get("status") == "blocked"
+
+
+def test_onboarding_in_segment_lead_proceeds_to_copilot():
+    cop = OnboardingCopilot(
+        reason=_scripted([_turn("Hi! What's your PAN and date of birth?")]),
+        checkpointer=MemorySaver(),
+    )
+    client, *_ = _make(copilot=cop, lead_reason=_scripted([_lead("in_segment", "PROCEED")]))
+    app_id = _create(client)
+    resp = client.post(f"/applications/{app_id}/onboarding/message",
+                       json={"message": "I need a personal loan of 3 lakh for home renovation"})
+    body = resp.json()
+    assert body["intent"] == "ok"
+    assert body["assistant_message"].startswith("Hi!")   # copilot turn ran
+
+
+def test_onboarding_uncertain_lead_asks_clarification_then_proceeds():
+    cop = OnboardingCopilot(
+        reason=_scripted([_turn("Hi! What's your PAN and date of birth?")]),
+        checkpointer=MemorySaver(),
+    )
+    client, *_ = _make(copilot=cop, lead_reason=_scripted([
+        _lead("uncertain", "INSUFFICIENT_INFO"), _lead("uncertain", "INSUFFICIENT_INFO")]))
+    app_id = _create(client)
+    r1 = client.post(f"/applications/{app_id}/onboarding/message",
+                     json={"message": "hello"}).json()
+    assert r1["intent"] == "needs_clarification"          # one clarifying question
+    r2 = client.post(f"/applications/{app_id}/onboarding/message",
+                     json={"message": "I think I might want some money"}).json()
+    assert r2["intent"] == "ok"                           # never traps the applicant
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +202,22 @@ def test_upload_unknown_document_type_is_400():
     app_id = _create(client)
     resp = client.post(f"/applications/{app_id}/documents", json={"doc_type": "selfie"})
     assert resp.status_code == 400
+
+
+def test_delete_document_clears_presence_for_reattach():
+    client, repo, *_ = _make()
+    app_id = _create(client)
+    client.post(f"/applications/{app_id}/documents", json={"doc_type": "pan_card"})
+    assert repo.get(app_id).features["documents"]["pan_card"]["uploaded"] is True
+
+    resp = client.delete(f"/applications/{app_id}/documents/pan_card")
+    assert resp.status_code == 200
+    assert resp.json()["uploaded"] is False
+    # presence cleared → the slot is empty again and re-attach is possible
+    assert "pan_card" not in (repo.get(app_id).features.get("documents") or {})
+
+    # idempotent: deleting an already-removed doc still succeeds
+    assert client.delete(f"/applications/{app_id}/documents/pan_card").status_code == 200
 
 
 def test_upload_document_file_stores_bytes_and_registers(tmp_path):

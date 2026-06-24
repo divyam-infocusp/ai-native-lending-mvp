@@ -173,6 +173,26 @@ def register_document(repository, application_id: str, doc_type: str, reference:
     return application
 
 
+def unregister_document(repository, application_id: str, doc_type: str):
+    """Clear a previously-uploaded document so the slot can be re-attached (the UI
+    'remove' action). Drops the presence record; the stored bytes are removed by
+    the upload endpoint via the document store. Idempotent."""
+    if doc_type not in REQUIRED_DOCUMENTS:
+        raise ValueError(f"unknown document type: {doc_type!r}")
+    application = repository.get(application_id)
+    if application is None:
+        raise ValueError(f"unknown application: {application_id!r}")
+    feats = dict(application.features or {})
+    docs = dict(feats.get("documents", {}))
+    if doc_type in docs:
+        del docs[doc_type]
+        feats["documents"] = docs
+        application.features = feats
+        application.updated_at = _utcnow()
+        repository.save(application)
+    return application
+
+
 def _apply_updates(application, extracted: dict) -> None:
     feats = dict(application.features or {})
     for key, value in extracted.items():

@@ -103,10 +103,26 @@ export function DetailsForm({
   }
 
   // Real file upload (#9) — stores the actual bytes for the OCR/LLM extractor.
+  // Re-uploading the same doc type overwrites it (the store is keyed by doc type),
+  // so this doubles as "Replace".
   async function uploadFile(doc: string, file: File) {
     try {
       await api.uploadDocumentFile(appId, doc, file);
       setUploaded((s) => new Set(s).add(doc));
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }
+
+  // Cancel an attached document so the slot can be re-attached.
+  async function removeDoc(doc: string) {
+    try {
+      await api.deleteDocument(appId, doc);
+      setUploaded((s) => {
+        const n = new Set(s);
+        n.delete(doc);
+        return n;
+      });
     } catch (e: any) {
       setError(e.message);
     }
@@ -204,7 +220,25 @@ export function DetailsForm({
               <li key={doc} className="flex items-center justify-between text-sm">
                 <span className="capitalize text-slate-600">{doc.replace(/_/g, " ")}</span>
                 {uploaded.has(doc) ? (
-                  <span className="text-emerald-600 font-medium">✓ uploaded</span>
+                  <span className="flex items-center gap-3">
+                    <span className="text-emerald-600 font-medium">✓ uploaded</span>
+                    <label className="text-brand hover:underline cursor-pointer">
+                      Replace
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) uploadFile(doc, f);
+                          e.target.value = ""; // allow re-picking the same filename
+                        }}
+                      />
+                    </label>
+                    <button type="button" onClick={() => removeDoc(doc)} className="text-slate-400 hover:text-rose-600">
+                      Remove
+                    </button>
+                  </span>
                 ) : (
                   <label className="text-brand hover:underline cursor-pointer">
                     Choose file
@@ -215,6 +249,7 @@ export function DetailsForm({
                       onChange={(e) => {
                         const f = e.target.files?.[0];
                         if (f) uploadFile(doc, f);
+                        e.target.value = "";
                       }}
                     />
                   </label>

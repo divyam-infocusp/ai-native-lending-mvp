@@ -103,6 +103,7 @@ def create_app(
     *,
     audit: AuditStore | None = None,
     copilot=None,
+    lead_reason=None,
     workflow_starter=None,
     resolve_signal=None,
     auth_service: AuthService | None = None,
@@ -260,10 +261,66 @@ def create_app(
 
     # ---- Control + read (#36) ---------------------------------------------
 
+    def _save_lead_intent(application, status: str, qr, attempts: int = 0) -> None:
+        feats = dict(application.features or {})
+        feats["lead_intent"] = {
+            "status": status,
+            "reason_code": getattr(qr, "reason_code", None),
+            "reasoning": getattr(qr, "reasoning", None),
+            "attempts": attempts,
+        }
+        application.features = feats
+        repo.save(application)
+
     @app.post("/applications/{application_id}/onboarding/message")
     def onboarding_message(application_id: str, body: OnboardingMessageIn,
                           user: User = Depends(current_user)) -> dict:
         require_authorized(application_id, user)
+
+        # Early intent gate (Step 2): on the first substantive chat turn, triage the
+        # applicant's stated intent before we collect any PII. Runs until the lead is
+        # qualified; once qualified it never runs again. The authoritative gate still
+        # runs in the workflow post-submission — this is the early UX short-circuit.
+        application = repo.get(application_id)
+        if application is None:
+            raise HTTPException(status_code=404, detail="application not found")
+        msg = (body.message or "").strip()
+        intent = (application.features or {}).get("lead_intent") or {}
+        if msg and intent.get("status") != "qualified":
+            from lending.agents import qualify_lead
+
+            attempts = int(intent.get("attempts", 0))
+            qr = qualify_lead(repo, audit_store, application_id,
+                              reason=lead_reason, message=msg)
+            if qr.status == "declined_early":
+                _save_lead_intent(application, "blocked", qr, attempts)
+                return {
+                    "application_id": application_id,
+                    "assistant_message": (
+                        "Thanks for reaching out — but this doesn't look like a "
+                        "personal-loan request, so I can't take it forward here. If you "
+                        "are looking for a personal loan, start a new application and "
+                        "tell me a bit about what you need."
+                    ),
+                    "complete": False, "missing": [], "collected": {},
+                    "intent": "blocked",
+                }
+            if qr.status == "manual_review" and attempts < 1:
+                _save_lead_intent(application, "pending", qr, attempts + 1)
+                return {
+                    "application_id": application_id,
+                    "assistant_message": (
+                        "Just to make sure I help you correctly — could you tell me in a "
+                        "sentence what you need? For example, the loan amount you're "
+                        "looking for and what it's for."
+                    ),
+                    "complete": False, "missing": [], "collected": {},
+                    "intent": "needs_clarification",
+                }
+            # in_segment, or still uncertain after one clarification → proceed (never
+            # trap the applicant; downstream review still catches genuine edge cases).
+            _save_lead_intent(application, "qualified", qr, attempts)
+
         resp = get_copilot().turn(repo, audit_store, application_id, body.message)
         return {
             "application_id": application_id,
@@ -271,6 +328,7 @@ def create_app(
             "complete": resp.complete,
             "missing": resp.missing,
             "collected": resp.collected,
+            "intent": "ok",
         }
 
     @app.post("/applications/{application_id}/details")
@@ -336,6 +394,21 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(err))
         return {"application_id": application_id, "doc_type": doc_type,
                 "uploaded": True, "reference": reference, "bytes": len(data)}
+
+    @app.delete("/applications/{application_id}/documents/{doc_type}")
+    def delete_document(application_id: str, doc_type: str,
+                       user: User = Depends(current_user)) -> dict:
+        """Remove an attached document so the applicant can re-attach (cancel/replace).
+        Clears both the stored bytes and the presence record. Idempotent."""
+        from lending.agents import unregister_document
+
+        require_authorized(application_id, user)
+        try:
+            unregister_document(repo, application_id, doc_type)
+        except ValueError as err:
+            raise HTTPException(status_code=400, detail=str(err))
+        document_store.delete(application_id, doc_type)
+        return {"application_id": application_id, "doc_type": doc_type, "uploaded": False}
 
     @app.get("/applications/{application_id}/documents/{doc_type}/file")
     async def get_document_file(

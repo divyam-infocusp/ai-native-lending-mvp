@@ -109,9 +109,15 @@ def qualify_lead(
     application_id: str,
     *,
     reason: Optional[ReasonFn] = None,
+    message: Optional[str] = None,
 ) -> QualificationResult:
     """Run the segment gate for an application, record the audited reason, and
-    return the outcome. Out-of-segment is filtered here (Step 2), not downstream."""
+    return the outcome. Out-of-segment is filtered here (Step 2), not downstream.
+
+    `message` is the applicant's free-text inquiry (e.g. the first onboarding chat
+    turn). Early in the journey the structured fields are still empty, so the
+    intent signal lives in what they typed — pass it here so the classifier can
+    triage spam / not-a-loan before we collect any PII."""
     application = repository.get(application_id)
     if application is None:
         raise ValueError(f"unknown application: {application_id!r}")
@@ -119,6 +125,7 @@ def qualify_lead(
     context = {
         "applicant": application.applicant.model_dump(),
         "features": application.features,
+        "inquiry_message": message,
     }
     agent = build_lead_qualification_agent(reason=reason)
     final = agent.invoke({"context": context}, config={"configurable": {"thread_id": application_id}})

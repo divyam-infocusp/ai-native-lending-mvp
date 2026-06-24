@@ -29,6 +29,7 @@ class StoredDocument:
 class DocumentStore(Protocol):
     def put(self, application_id: str, doc_type: str, data: bytes, content_type: str) -> str: ...
     def get(self, application_id: str, doc_type: str) -> Optional[StoredDocument]: ...
+    def delete(self, application_id: str, doc_type: str) -> bool: ...
 
 
 _SAFE = re.compile(r"[^A-Za-z0-9_-]")
@@ -70,6 +71,18 @@ class LocalDocumentStore:
         type_file = directory / f"{safe_doc}.type"
         content_type = type_file.read_text().strip() if type_file.exists() else "application/octet-stream"
         return StoredDocument(data=path.read_bytes(), content_type=content_type)
+
+    def delete(self, application_id: str, doc_type: str) -> bool:
+        """Remove the stored file (+ its sidecar) so the slot can be re-attached.
+        Returns True if anything was deleted. Idempotent."""
+        directory = self._dir(application_id)
+        if not directory.exists():
+            return False
+        removed = False
+        for p in directory.glob(f"{_safe(doc_type)}.*"):
+            p.unlink(missing_ok=True)
+            removed = True
+        return removed
 
 
 def make_document_store() -> DocumentStore:
