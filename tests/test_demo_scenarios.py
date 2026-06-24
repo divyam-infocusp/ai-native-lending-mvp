@@ -40,7 +40,7 @@ def test_scenario_bureau_thin_file_recovers_on_repull():
 def test_scenario_bureau_clean_is_default():
     repo, app_id = _repo_with("clean")
     report = pull_bureau(ScenarioBureauHarness(repo), app_id)
-    assert report.has_record and report.score == 780
+    assert report.has_record and report.score == 700
 
 
 def test_ocr_doc_mismatch_perturbs_name():

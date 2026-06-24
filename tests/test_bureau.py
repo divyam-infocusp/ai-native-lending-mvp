@@ -28,7 +28,7 @@ def _harness_with_adapter():
 def test_pull_returns_typed_report_with_score_obligations_tradelines():
     report = pull_bureau(make_mock_bureau_harness(), "app-1")
     assert isinstance(report, BureauReport)
-    assert report.score == 780
+    assert report.score == 700
     assert report.has_record is True
     assert report.total_monthly_obligations == 3_000.0
     assert len(report.tradelines) == 2

@@ -66,7 +66,7 @@ def pull_bureau(harness: AdapterHarness, application_id: str, *, purpose: str = 
 
 # A healthy file: good score, light obligations.
 CLEAN_REPORT: dict = {
-    "score": 780,
+    "score": 700,
     "has_record": True,
     "total_monthly_obligations": 3_000.0,
     "tradelines": [

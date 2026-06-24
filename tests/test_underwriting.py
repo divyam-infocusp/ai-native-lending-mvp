@@ -58,7 +58,7 @@ def test_assemble_features_merges_bureau_and_stated_data():
     features, missing = assemble_features(app, report)
     assert missing == []
     # credit data from the bureau
-    assert features.cibil_score == 780
+    assert features.cibil_score == 700
     assert features.monthly_obligations == 3_000.0
     assert features.has_cibil_record is True
     # stated data from the application
@@ -126,7 +126,7 @@ def test_underwrite_completes_and_writes_summary_not_decision():
 
     result = underwrite(repo, audit, app_id, bureau_harness=_bureau())
     assert result.status == "completed"
-    assert result.summary["bureau_score"] == 780
+    assert result.summary["bureau_score"] == 700
     # Post-loan DTI: existing obligations + prospective EMI, over income — the same
     # definition the HIGH_DTI rule + scorecard use (not obligations-only).
     expected_dti = round((3_000 + 300_000 / 36) / 90_000, 4)
@@ -135,7 +135,7 @@ def test_underwrite_completes_and_writes_summary_not_decision():
 
     app = repo.get(app_id)
     # engine inputs persisted for reproducibility
-    assert app.features["cibil_score"] == 780
+    assert app.features["cibil_score"] == 700
     assert app.features["underwriting_summary"]["dti"] == expected_dti
     # READ-ONLY: the agent never writes the decision (that is #18's job)
     assert app.decision is None
