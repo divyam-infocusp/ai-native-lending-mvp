@@ -47,7 +47,7 @@ from lending.cashflow import (
 
 # Reuse the document loading + provenance helpers from the OCR extractor rather
 # than duplicate them — a statement is loaded exactly like any other document.
-from .llm_ocr import Document, _quote_present, load_file, make_store_loader, pdf_text
+from .llm_ocr import Document, _quote_present, call_with_retry, load_file, make_store_loader, pdf_text
 
 # This adapter produces these canonical fields. `net_monthly_income` overlaps the
 # salary slip / Form-16, so Document Intelligence cross-checks it for free;
@@ -366,7 +366,6 @@ def gemini_statement_pass(*, model: Optional[str] = None, temperature: float = 0
 
     def statement_pass(document: Document) -> list[dict]:
         import sys
-        import time
 
         from google import genai
         from google.genai import types
@@ -378,8 +377,6 @@ def gemini_statement_pass(*, model: Optional[str] = None, temperature: float = 0
         client = genai.Client(api_key=api_key)
         print(f"      · payload: {len(document.data) / 1024:.0f} KB {document.mime_type}, model={chosen}",
               file=sys.stderr, flush=True)
-
-        import httpx
 
         def _call():
             return client.models.generate_content(
@@ -395,16 +392,12 @@ def gemini_statement_pass(*, model: Optional[str] = None, temperature: float = 0
                 ),
             )
 
-        for attempt in range(1, retries + 1):
-            try:
-                response = _call()
-                break
-            except httpx.TransportError as err:
-                if attempt == retries:
-                    raise
-                print(f"      · attempt {attempt}/{retries} failed ({type(err).__name__}: {err}); "
-                      f"retrying in {backoff_s * attempt:.1f}s…", file=sys.stderr, flush=True)
-                time.sleep(backoff_s * attempt)
+        response = call_with_retry(
+            _call, retries=retries, backoff_s=backoff_s,
+            on_retry=lambda a, n, err, delay: print(
+                f"      · attempt {a}/{n} failed ({type(err).__name__}: {err}); "
+                f"retrying in {delay:.1f}s…", file=sys.stderr, flush=True),
+        )
 
         parsed = getattr(response, "parsed", None)
         if isinstance(parsed, _Statement):

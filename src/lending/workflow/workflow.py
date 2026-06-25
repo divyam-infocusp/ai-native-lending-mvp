@@ -63,7 +63,10 @@ class LoanOriginationWorkflow:
                 outcome = await workflow.execute_activity(
                     OriginationActivities.verify_kyc,
                     args=[application_id],
-                    start_to_close_timeout=timedelta(seconds=60),  # OCR + scoring
+                    # OCR + bank-statement extraction + scoring. The statement is a
+                    # heavier call and call_with_retry may add a little backoff on a
+                    # transient 503/429, so allow headroom beyond the OCR-only budget.
+                    start_to_close_timeout=timedelta(seconds=120),
                 )
                 next_state = State(outcome)  # KYC_VERIFIED | KYC_EXCEPTION
             elif current == State.UNDERWRITING:

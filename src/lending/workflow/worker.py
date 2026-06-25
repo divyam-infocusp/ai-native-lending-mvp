@@ -62,7 +62,12 @@ def build_doc_extractor(adapter_mode: str, repository):
     bank_statement = make_bank_statement_extractor(
         loader,
         gemini_statement_pass(model=model_lite()),
-        samples=3,
+        # A statement is a large, transaction-dense call — far heavier than an ID
+        # doc — so it's the most likely to hit model overload / rate limits. A
+        # single sample minimizes that load (and latency); confidence then rests on
+        # provenance + recurrence-regularity rather than cross-sample agreement,
+        # and call_with_retry rides through brief 503/429 spikes.
+        samples=1,
         amount_tol_pct=cf["amount_tol_pct"],
         min_recurrence_months=cf["min_recurrence_months"],
         consistency_tol_pct=cf["consistency_tol_pct"],

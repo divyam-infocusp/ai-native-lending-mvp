@@ -213,6 +213,42 @@ _PROMPT = (
 )
 
 
+# Transient Gemini failures — network blips and the API's own "high demand" (503),
+# rate-limit (429), and 500 responses — are common and usually clear within a few
+# seconds. Retry them locally with exponential backoff so a brief spike doesn't fail
+# the whole KYC activity (which would make Temporal re-extract every document). A
+# non-transient error (bad request, auth) is re-raised at once.
+_TRANSIENT_STATUS = frozenset({429, 500, 503})
+
+
+def call_with_retry(fn, *, retries: int = 3, backoff_s: float = 1.5,
+                    on_retry: Optional[Callable[[int, int, Exception, float], None]] = None):
+    """Call `fn()`, retrying transient network / Gemini-overload failures with
+    exponential backoff (`backoff_s * 2**(attempt-1)`). Re-raises a non-transient
+    error immediately, and the last transient error after `retries` attempts."""
+    import time
+
+    import httpx
+    from google.genai import errors as genai_errors
+
+    last: Optional[Exception] = None
+    for attempt in range(1, retries + 1):
+        try:
+            return fn()
+        except httpx.TransportError as err:           # ConnectError / DNS / read errors
+            last = err
+        except genai_errors.APIError as err:          # 503 high-demand / 429 / 500
+            if getattr(err, "code", None) not in _TRANSIENT_STATUS:
+                raise
+            last = err
+        if attempt == retries:
+            raise last
+        delay = backoff_s * (2 ** (attempt - 1))
+        if on_retry:
+            on_retry(attempt, retries, last, delay)
+        time.sleep(delay)
+
+
 def gemini_vision_pass(*, model: Optional[str] = None, temperature: float = 0.4,
                        retries: int = 3, backoff_s: float = 1.5) -> VisionPass:
     """A live single-pass extractor backed by Gemini (multimodal). Temperature > 0
@@ -245,8 +281,6 @@ def gemini_vision_pass(*, model: Optional[str] = None, temperature: float = 0.4,
         print(f"      · payload: {size_kb:.0f} KB {document.mime_type}, model={chosen}",
               file=sys.stderr, flush=True)
 
-        import httpx
-
         def _call():
             return client.models.generate_content(
                 model=chosen,
@@ -262,16 +296,12 @@ def gemini_vision_pass(*, model: Optional[str] = None, temperature: float = 0.4,
             )
 
         t = time.monotonic()
-        for attempt in range(1, retries + 1):
-            try:
-                response = _call()
-                break
-            except httpx.TransportError as err:  # ConnectError / DNS / read errors
-                if attempt == retries:
-                    raise
-                print(f"      · attempt {attempt}/{retries} failed ({type(err).__name__}: {err}); "
-                      f"retrying in {backoff_s * attempt:.1f}s…", file=sys.stderr, flush=True)
-                time.sleep(backoff_s * attempt)
+        response = call_with_retry(
+            _call, retries=retries, backoff_s=backoff_s,
+            on_retry=lambda a, n, err, delay: print(
+                f"      · attempt {a}/{n} failed ({type(err).__name__}: {err}); "
+                f"retrying in {delay:.1f}s…", file=sys.stderr, flush=True),
+        )
         _t("generate_content (the API call)", t)
 
         t = time.monotonic()
