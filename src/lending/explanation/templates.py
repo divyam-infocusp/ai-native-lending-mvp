@@ -38,6 +38,10 @@ TEMPLATES: dict[tuple[str, str], Template] = {
         "Your approval is sensitive to income variation: under a {haircut_pct}% income reduction your risk band would move from {original_band} to {stressed_band}, so we have referred it for a manual underwriter review.",
         "sensitive to income variation",
     ),
+    ("CASHFLOW_OBLIGATIONS_DISCREPANCY", "en"): Template(
+        "A review of your bank statement shows recurring debt obligations materially higher than those recorded on your credit bureau file, so we have referred your application for a manual underwriter review.",
+        "recurring debt obligations materially higher",
+    ),
     ("SHORT_EMPLOYMENT", "en"): Template(
         "Your current employment tenure of {employment_tenure_months} months is below the required minimum of {min_employment_months} months.",
         "current employment tenure",

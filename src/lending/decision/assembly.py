@@ -34,8 +34,16 @@ def decide(
     features: ApplicantFeatures,
     version_set: VersionSet | None = None,
     language: str = "en",
+    *,
+    cashflow_flags: list[str] | None = None,
 ) -> Decision:
-    """Compose the deterministic engines into a decision-of-record. Pure."""
+    """Compose the deterministic engines into a decision-of-record. Pure.
+
+    `cashflow_flags` carries bank-statement cross-validation findings from
+    underwriting (#53 Phase 1). A confident, material bank-vs-bureau obligations
+    discrepancy refers an otherwise-approvable application for human review; it
+    never alters the scorecard, the bureau-sourced DTI, or a DECLINE — it is purely
+    a routing signal to a human with override authority."""
     vs = version_set or active_version_set()
     validate_version_set(vs)  # no decision without a complete, valid version stamp (#7)
 
@@ -71,6 +79,18 @@ def decide(
             reason_codes = ["INCOME_SENSITIVE"]  # self-justifying refer (carries a reason + explanation)
         else:
             disposition = Disposition.APPROVE
+
+    # Cashflow cross-validation (#53 Phase 1): a confident, material bank-vs-bureau
+    # obligations discrepancy refers an otherwise-approvable application for human
+    # review. It never overrides a DECLINE (moot) and only *adds* a reason to an
+    # existing REFER — it cannot make a decision more severe, only route an APPROVE
+    # to a human. The bureau-sourced DTI is untouched.
+    if (cashflow_flags and "OBLIGATIONS_UNDERREPORTED_BY_BUREAU" in cashflow_flags
+            and disposition != Disposition.DECLINE):
+        if disposition == Disposition.APPROVE:
+            disposition = Disposition.REFER
+        if "CASHFLOW_OBLIGATIONS_DISCREPANCY" not in reason_codes:
+            reason_codes = [*reason_codes, "CASHFLOW_OBLIGATIONS_DISCREPANCY"]
 
     # Numbers for the templates; fold in the sensitivity figures for INCOME_SENSITIVE.
     context = build_context(vars(features), vs.rules)

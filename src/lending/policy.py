@@ -137,3 +137,26 @@ CONSENT_POLICY: dict[str, dict] = {
         "l2_freshness_seconds": 300,
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# Cashflow / bank-statement analysis (#53 Phase 1) — cross-validation thresholds
+#
+# Two groups: how recurring obligations are DERIVED from transactions, and when a
+# bank-vs-bureau obligations gap is treated as a REVIEWABLE discrepancy. The latter
+# can route an otherwise-APPROVE application to REFER, so these are credit-risk
+# parameters, owned here (versioned/auditable) — not hardcoded in the agents.
+# ---------------------------------------------------------------------------
+CASHFLOW_POLICY: dict[str, dict] = {
+    "v1": {
+        # --- feature derivation (recurring EMI detection) ---
+        "amount_tol_pct": 0.05,        # two debits are the same EMI stream within 5%
+        "min_recurrence_months": 2,    # a stream must repeat in ≥2 months to be an obligation
+        # --- extraction trust (self-consistency across LLM samples) ---
+        "consistency_tol_pct": 0.05,   # samples agree on a value within 5%
+        # --- bank-vs-bureau obligations reconciliation (→ REFER routing) ---
+        "obligations_tol_pct": 0.15,   # within 15% of bureau → agree
+        "obligations_min_delta": 2_000,  # ignore absolute gaps under ₹2k
+        "obligations_min_conf": 0.50,  # below this bank confidence, don't act on a gap
+    },
+}

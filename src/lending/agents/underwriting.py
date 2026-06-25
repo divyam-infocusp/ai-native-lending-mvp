@@ -28,6 +28,7 @@ from lending.adapters import pull_bureau
 from lending.audit import AuditStore, EventType
 from lending.consent import ConsentError, enforce_consent
 from lending.governance import active_version_set
+from lending.policy import CASHFLOW_POLICY
 from lending.rules_engine import ApplicantFeatures, dti_ratio, evaluate
 from lending.scorecard import score
 
@@ -103,6 +104,62 @@ def assemble_features(application, report, *, today: Optional[date] = None) -> t
     return ApplicantFeatures(**candidate), []
 
 
+def _field_confidence(application, field_name: str) -> Optional[float]:
+    """The grounded confidence KYC recorded for a field (None if absent)."""
+    for fc in (getattr(application.kyc, "field_confidence", None) or []):
+        if getattr(fc, "field_name", None) == field_name:
+            return fc.confidence
+    return None
+
+
+def reconcile_obligations(
+    bank_value: Optional[float],
+    bank_confidence: Optional[float],
+    bureau_value: float,
+    *,
+    tol_pct: Optional[float] = None,
+    min_delta: Optional[float] = None,
+    min_conf: Optional[float] = None,
+    policy_version: str = "v1",
+) -> dict:
+    """Cross-check bank-observed monthly obligations against the bureau figure
+    WITHOUT changing the binding DTI (the engine keeps the bureau number — the
+    Phase-1 decision). Pure; returns a reconciliation record for the summary/audit.
+
+    Thresholds come from the versioned CASHFLOW_POLICY by default; pass them
+    explicitly only to override (e.g. in tests). Only a *confident, material excess*
+    of bank over bureau ("hidden debt the bureau missed") raises a flag for a human
+    to review. Bank-lower is informational (a loan serviced from another account),
+    and a low-confidence bank read is not acted on at all."""
+    cfg = CASHFLOW_POLICY[policy_version]
+    tol_pct = cfg["obligations_tol_pct"] if tol_pct is None else tol_pct
+    min_delta = cfg["obligations_min_delta"] if min_delta is None else min_delta
+    min_conf = cfg["obligations_min_conf"] if min_conf is None else min_conf
+    if bank_value is None:
+        return {"status": "no_bank_statement", "bureau": round(bureau_value, 2),
+                "bank": None, "flag": None}
+    record = {
+        "bureau": round(bureau_value, 2),
+        "bank": round(bank_value, 2),
+        "delta": round(bank_value - bureau_value, 2),
+        "bank_confidence": bank_confidence,
+        "flag": None,
+    }
+    if bank_confidence is not None and bank_confidence < min_conf:
+        record["status"] = "low_confidence"
+        return record
+    threshold = max(min_delta, tol_pct * max(bureau_value, 0.0))
+    delta = bank_value - bureau_value
+    if delta > threshold:
+        record["status"] = "bank_higher"      # bureau likely missed obligations
+        record["flag"] = "OBLIGATIONS_UNDERREPORTED_BY_BUREAU"
+    elif delta < -threshold:
+        record["status"] = "bank_lower"        # informational, not a risk
+    else:
+        record["status"] = "agree"
+    return record
+
+
 def _build_summary(features: ApplicantFeatures, report) -> dict:
     """Read-only engine preview → a cashflow / explainability summary. Does NOT
     decide (no disposition is bound here); the decision step (#18) does that."""
@@ -161,6 +218,21 @@ def underwrite(
 
     # 5. Read-only engine preview → explainability summary.
     summary = _build_summary(features, report)
+
+    # 5b. Cross-validate obligations against the bank statement (#53 Phase 1). This
+    # does NOT change the engine's DTI (still bureau-sourced) — it only records a
+    # reconciliation and, when the bank confidently shows materially MORE debt than
+    # the bureau, raises a flag for the underwriter to review.
+    recon = reconcile_obligations(
+        (application.features or {}).get("bank_monthly_obligations"),
+        _field_confidence(application, "bank_monthly_obligations"),
+        report.total_monthly_obligations,
+    )
+    summary["obligations_reconciliation"] = recon
+    summary["cashflow_policy_version"] = "v1"   # traceability until version-set pinning
+    if recon.get("flag"):
+        summary["cashflow_flags"] = [recon["flag"]]
+
     engine_inputs = {k: getattr(features, k) for k in _ENGINE_FIELDS}
 
     # Persist assembled inputs (so the decision is reproducible) + the summary.

@@ -206,7 +206,10 @@ class OriginationActivities:
         if missing:
             raise ValueError(f"missing scoring features for {application_id!r}: {missing}")
         features = ApplicantFeatures(**{f: feats[f] for f in _FEATURE_FIELDS})
-        decision = decide(features)
+        # Cashflow cross-validation flags from underwriting (#53 Phase 1) — may refer
+        # an otherwise-approvable application for human review (never alters DTI).
+        cashflow_flags = (feats.get("underwriting_summary") or {}).get("cashflow_flags")
+        decision = decide(features, cashflow_flags=cashflow_flags)
         record_decision(self._repo, self._audit, application_id, decision)
 
         # Decision QA (#23): assert every decision is well-formed and that any

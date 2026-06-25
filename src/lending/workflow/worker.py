@@ -31,6 +31,11 @@ def build_doc_extractor(adapter_mode: str, repository):
     mock demo keeps working. `adapter_mode` is kept for signature symmetry but no
     longer gates the doc path (the LLM call needs GOOGLE_API_KEY, used only when a
     real file is actually present)."""
+    from lending.adapters.bank_statement import (
+        BANK_STATEMENT_DOC_TYPE,
+        gemini_statement_pass,
+        make_bank_statement_extractor,
+    )
     from lending.adapters.llm_ocr import (
         gemini_vision_pass,
         make_llm_extractor,
@@ -38,18 +43,35 @@ def build_doc_extractor(adapter_mode: str, repository):
     )
     from lending.adapters.ocr_mock import make_reflective_ocr_extractor
     from lending.agents.llm import model_lite
+    from lending.policy import CASHFLOW_POLICY
     from lending.storage import make_document_store
 
     store = make_document_store()
+    loader = make_store_loader(store)
     reflective = make_reflective_ocr_extractor(repository)
     llm = make_llm_extractor(
-        make_store_loader(store),
+        loader,
         gemini_vision_pass(model=model_lite()),   # lite + downscale ≈ 2.3s/doc
         samples=3,                                  # self-consistency (run in parallel per doc)
+    )
+    # A bank statement is a transaction time-series, not a field-extraction (#53):
+    # its own extractor labels transactions and derives net_monthly_income (which
+    # cross-checks the payslip) + monthly_obligations. lite + sampling, same as OCR.
+    # Recurrence/consistency thresholds come from the versioned CASHFLOW_POLICY.
+    cf = CASHFLOW_POLICY["v1"]
+    bank_statement = make_bank_statement_extractor(
+        loader,
+        gemini_statement_pass(model=model_lite()),
+        samples=3,
+        amount_tol_pct=cf["amount_tol_pct"],
+        min_recurrence_months=cf["min_recurrence_months"],
+        consistency_tol_pct=cf["consistency_tol_pct"],
     )
 
     def extract(application_id: str, doc_type: str) -> dict:
         if store.get(application_id, doc_type) is not None:   # a real file was uploaded
+            if doc_type == BANK_STATEMENT_DOC_TYPE:
+                return bank_statement(application_id, doc_type)
             return llm(application_id, doc_type)
         return reflective(application_id, doc_type)           # mock / demo-scenario upload
 
