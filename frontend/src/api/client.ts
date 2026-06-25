@@ -116,11 +116,15 @@ export interface PolicyView {
   };
 }
 
+// Must match the backend's REQUIRED_DOCUMENTS (lending/agents/onboarding.py) so the
+// form, the attach UI, and the copilot all ask for the same set. bank_statement (#53)
+// is required — it drives income (vs payslip) and obligations (vs bureau) cross-checks.
 export const REQUIRED_DOCUMENTS = [
   "aadhaar_card",
   "pan_card",
   "salary_slips",
   "form16",
+  "bank_statement",
 ] as const;
 
 export const BUREAU_PULL_PURPOSE = "bureau_pull";

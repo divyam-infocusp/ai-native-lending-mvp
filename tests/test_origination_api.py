@@ -9,6 +9,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from fastapi.testclient import TestClient
 
 from lending.agents import OnboardingCopilot
+from lending.agents.onboarding import REQUIRED_DOCUMENTS
 from lending.audit import AuditStore
 from lending.auth import AuthService
 from lending.los import Applicant, Application, ApplicationRepository, make_engine
@@ -74,7 +75,7 @@ def _complete(client, app_id) -> None:
         "employment_tenure_months": "48", "monthly_income": "85000",
         "loan_amount_requested": "300000", "loan_tenure_months": "36", "loan_purpose": "renovation",
     }})
-    for d in ("aadhaar_card", "pan_card", "salary_slips", "form16"):
+    for d in REQUIRED_DOCUMENTS:
         client.post(f"/applications/{app_id}/documents", json={"doc_type": d})
 
 

@@ -173,7 +173,7 @@ def test_documents_required_for_completeness():
     assert r1.complete is False
     assert r1.missing == [
         "document:aadhaar_card", "document:pan_card",
-        "document:salary_slips", "document:form16",
+        "document:salary_slips", "document:form16", "document:bank_statement",
     ]
 
     # Real uploads via register_document (not the chat) clear the checklist.

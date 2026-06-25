@@ -14,8 +14,6 @@ import pytest
 import lending.policy as policy
 from lending.agents.document_intelligence import evaluate
 from lending.agents.onboarding import (
-    ACCEPTED_DOCUMENTS,
-    OPTIONAL_DOCUMENTS,
     REQUIRED_DOCUMENTS,
     missing_fields,
     register_document,
@@ -212,27 +210,26 @@ def test_bank_income_mismatch_flags_and_lowers_confidence():
 
 
 # ---------------------------------------------------------------------------
-# Onboarding: bank_statement is accepted but optional
+# Onboarding: bank_statement is a required document
 # ---------------------------------------------------------------------------
 
 def _repo():
     return ApplicationRepository(make_engine())
 
 
-def test_bank_statement_is_optional_not_required():
-    assert "bank_statement" in OPTIONAL_DOCUMENTS
-    assert "bank_statement" in ACCEPTED_DOCUMENTS
-    assert "bank_statement" not in REQUIRED_DOCUMENTS
+def test_bank_statement_is_a_required_document():
+    assert "bank_statement" in REQUIRED_DOCUMENTS
 
 
-def test_bank_statement_can_be_registered_and_does_not_gate_completeness():
+def test_bank_statement_gates_completeness_until_uploaded():
     repo = _repo()
     app = Application(applicant=Applicant(full_name="Aarav Sharma"), features={})
     repo.save(app)
+    # Required but not yet uploaded → it is a missing item.
+    assert "document:bank_statement" in missing_fields(repo.get(app.application_id))
     register_document(repo, app.application_id, "bank_statement")
     app = repo.get(app.application_id)
     assert app.features["documents"]["bank_statement"]["uploaded"] is True
-    # It is never a missing-required item (the required docs still are, unfilled).
     assert "document:bank_statement" not in missing_fields(app)
 
 

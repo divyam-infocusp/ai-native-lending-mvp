@@ -53,15 +53,11 @@ REQUIRED_DOCUMENTS = [
     "pan_card",      # utility bill / Aadhaar / passport
     "salary_slips",       # last 2-3 months
     "form16",             # or ITR, previous year
-]
-# Optional documents: accepted (uploadable + processed by the agents) but NOT
-# required for submission. bank_statement (#53) drives cross-validation —
-# net-income vs the payslip and obligations vs the bureau — so an applicant who
-# provides it gets a more grounded assessment, but its absence never blocks them.
-OPTIONAL_DOCUMENTS = [
+    # bank_statement (#53): required so its cross-validation always runs — net
+    # income vs the payslip and obligations vs the bureau. Its real value is the
+    # transaction time-series, processed by the dedicated bank-statement extractor.
     "bank_statement",
 ]
-ACCEPTED_DOCUMENTS = REQUIRED_DOCUMENTS + OPTIONAL_DOCUMENTS
 
 _APPLICANT_FIELDS = {"full_name", "pan", "aadhaar", "date_of_birth", "mobile", "email", "current_address"}
 
@@ -163,7 +159,7 @@ def register_document(repository, application_id: str, doc_type: str, reference:
     this when a file is received). Presence is set here, not by the copilot. The
     `verified` slot is left for Document Intelligence (#19) to fill (right doc?
     readable? matches the applicant?)."""
-    if doc_type not in ACCEPTED_DOCUMENTS:
+    if doc_type not in REQUIRED_DOCUMENTS:
         raise ValueError(f"unknown document type: {doc_type!r}")
     application = repository.get(application_id)
     if application is None:
@@ -182,7 +178,7 @@ def unregister_document(repository, application_id: str, doc_type: str):
     """Clear a previously-uploaded document so the slot can be re-attached (the UI
     'remove' action). Drops the presence record; the stored bytes are removed by
     the upload endpoint via the document store. Idempotent."""
-    if doc_type not in ACCEPTED_DOCUMENTS:
+    if doc_type not in REQUIRED_DOCUMENTS:
         raise ValueError(f"unknown document type: {doc_type!r}")
     application = repository.get(application_id)
     if application is None:
