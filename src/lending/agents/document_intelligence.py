@@ -407,6 +407,18 @@ def verify_documents(
     if "gross_monthly_income" in result.profile:
         feats["monthly_income"] = result.profile["gross_monthly_income"]
 
+    # Preserve the bank-statement obligations breakdown (the recurring EMI streams)
+    # for the underwriter — the generic field persistence above keeps only the
+    # scalar value. This detail powers the bank-vs-bureau reconciliation view shown
+    # when a case is referred for under-reported obligations (#53).
+    bank_obl = (extractions.get("bank_statement") or {}).get("bank_monthly_obligations")
+    if bank_obl:
+        feats["bank_obligations_detail"] = {
+            "value": bank_obl.get("value"),
+            "months_observed": bank_obl.get("months_observed"),
+            "streams": bank_obl.get("basis", []),
+        }
+
     # Mark each document's verified slot (#19 owns this; presence was set on upload).
     doc_verdict = _which_docs_verified(extractions, result.field_confidence)
     new_docs = {d: dict(rec or {}) for d, rec in docs.items()}

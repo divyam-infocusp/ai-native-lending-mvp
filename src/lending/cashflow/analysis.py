@@ -187,6 +187,7 @@ def monthly_obligations(
     basis = tuple(
         {
             "payee": _norm_payee(s[0].description),
+            "label": s[0].description,   # human-readable example narration (for review)
             "monthly_amount": round(median(t.amount for t in s), 2),
             "months_seen": len({_year_month(t.date) for t in s}),
         }

@@ -228,6 +228,13 @@ def underwrite(
         _field_confidence(application, "bank_monthly_obligations"),
         report.total_monthly_obligations,
     )
+    # Attach the consolidated breakdown (recurring EMI streams the bank statement
+    # revealed) so the underwriter can see *what* the discrepancy is, not just a
+    # total, when reviewing a referred case.
+    detail = (application.features or {}).get("bank_obligations_detail") or {}
+    if detail.get("streams"):
+        recon["streams"] = detail["streams"]
+        recon["months_observed"] = detail.get("months_observed")
     summary["obligations_reconciliation"] = recon
     summary["cashflow_policy_version"] = "v1"   # traceability until version-set pinning
     if recon.get("flag"):

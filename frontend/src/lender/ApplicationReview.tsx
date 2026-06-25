@@ -226,6 +226,7 @@ export function ApplicationReview() {
   const di: Record<string, any> = f.documented_identity ?? {};   // identity: what docs read vs claim
   const st: Record<string, any> = f.applicant_stated ?? {};      // financials: what applicant stated vs docs
   const uw = f.underwriting_summary;
+  const recon = uw?.obligations_reconciliation;   // bank-vs-bureau obligations (#53)
   const offer = f.offer_letter;
   const decision = app.decision;
   const fc = app.kyc?.field_confidence ?? [];
@@ -368,6 +369,43 @@ export function ApplicationReview() {
                 <Field label="Obligations" value={inr(uw.monthly_obligations)} />
                 <Field label="Tradelines" value={txt(uw.tradelines_count)} />
               </dl>
+            </Card>
+          )}
+
+          {recon && recon.bank != null && (
+            <Card title="Bank statement cross-check">
+              <dl>
+                <Field label="Bureau obligations" value={inr(recon.bureau)} />
+                <Field label="Bank statement obligations" value={inr(recon.bank)} />
+                <Field label="Difference" value={inr(recon.delta)} />
+                {recon.bank_confidence != null && (
+                  <Field label="Bank reading confidence" value={`${Math.round(recon.bank_confidence * 100)}%`} />
+                )}
+              </dl>
+              {recon.flag && (
+                <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">
+                  ⚠ Bank statement shows materially more debt than the bureau — likely under-reported
+                  obligations. DTI was computed from the bureau figure; review the breakdown below.
+                </div>
+              )}
+              {recon.streams?.length > 0 && (
+                <div className="mt-3">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-1">
+                    Recurring obligations on statement{recon.months_observed ? ` (over ${recon.months_observed} mo)` : ""}
+                  </div>
+                  <ul className="space-y-1 text-sm">
+                    {recon.streams.map((s: any, i: number) => (
+                      <li key={i} className="flex items-center justify-between gap-2">
+                        <span className="text-slate-600 truncate" title={s.label || s.payee}>{s.label || s.payee}</span>
+                        <span className="font-mono text-slate-700 whitespace-nowrap">
+                          {inr(s.monthly_amount)}
+                          {s.months_seen ? <span className="text-slate-400"> · {s.months_seen}×</span> : null}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </Card>
           )}
 
